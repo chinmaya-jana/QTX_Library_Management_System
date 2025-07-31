@@ -1,0 +1,16 @@
+book_id,title,publication_date,total_copies,available_copies,library_id,isbn
+1,The Pragmatic Programmer,2020-04-15,10,8,1,9780135957059
+2,Clean Code,2018-01-01,15,12,1,9780132350884
+3, ,2016-06-30,20,20,2,9780262033848
+4,Deep Learning,2019-03-25,7,8,3,9780262035613
+5,Python Crash Course,2021-11-10,-12,10,1,9781593279288
+6,Fluent Python,2020-08-20,9,9,1,9781491946008
+7,Design Patterns,1994-10-21,5,-1,2,9780201633610
+8,Refactoring,2019-06-18,10,9,3,1234567890123
+9,Effective Java,2018-01-06,8,8,1,9780134685991
+10,AI: A Modern Approach,2020-09-10,10,10,2,
+11,JavaScript: The Good Parts,2008-05-01,4,3,2,9780596517748
+12,Eloquent JavaScript,2021-12-01,6,6,3,9781593279509
+13,Computer Networks,2017-09-01,15,15,2,9780132126953
+14,Operating System Concepts,2018-02-15,10,7,3,9781119456339
+15,Wrong ISBN Length,2015-06-20,5,5,2,9780134
