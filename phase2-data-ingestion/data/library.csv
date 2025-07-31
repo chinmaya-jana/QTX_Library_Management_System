@@ -1,0 +1,8 @@
+"library_id,name,campus_location,contact_email,phone_number"
+"1,Main Library,North Campus,contact@mainlib.edu,+1-1234567890"
+"2,Science Library,South Campus,science.lib@example.com,+1-9876543210"
+"3,Engineering Hub,East Campus,enghub@university.edu,+1-555-1234567"
+"4,Faulty Library, ,bademail@,1234567890"
+"5,Old Library,West Campus,oldlib@domain.com,+1-11122233344"
+"6,NoEmail Library,North Campus,,+1-2223334444"
+"7,Space Library,  West Campus  , spaced@library.com , +1-3334445555"

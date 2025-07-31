@@ -1,25 +1,20 @@
-from book import Book
+
+from models import Book
 import logging
 import csv
 from datetime import datetime
 from pydantic import ValidationError
 
-# Configure logging
+# Logging
 logging.basicConfig(
-    filename='../invalid_data/invalid_books.log',
-    filemode='a',
     level=logging.WARNING,
-    format='\n%(asctime)s - BookID %(book_id)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format='%(levelname)s: BookID %(book_id)s - %(message)s'
 )
-
 def main():
-
     with open('../data/books.csv', newline='', encoding='utf-8') as books:
         reader = csv.DictReader(books)
         for row in reader:
             try:
-                #convert and prepare fields
                 row['book_id'] = int(row['book_id'].strip())
                 row['title'] = str(row['title'])
                 row['publication_date'] = datetime.strptime(row['publication_date'].strip(), '%Y-%m-%d').date()
@@ -34,14 +29,12 @@ def main():
 
             except ValidationError as ve:
                 book_id = row.get('book_id', 'Unknown')
-
                 error = "; ".join([err['msg'] for err in ve.errors()])
-                logging.warning(f"Invalid data: {row} | Error: {error}", extra={'book_id': book_id})
+                logging.warning(f"Validation failed: {error}", extra={'book_id': book_id})
 
-            # Unhandled error
             except Exception as e:
                 book_id = row.get('book_id', 'Unknown')
-                logging.warning(f"Invalid data: {row} | Error: {e}", extra={'book_id': book_id})
+                logging.warning(f"Unexpected error: {e}", extra={'book_id': book_id})
 
 if __name__ == "__main__":
     main()
