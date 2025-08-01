@@ -1,0 +1,13 @@
+review_id,member_id,book_id,rating,comment,review_date
+1,1,1,4.5,Great insights on software development,2024-07-01
+2,2,3,5.0,Very informative and detailed,2024-07-02
+3,3,5,3.0,Good but some parts confusing,2024-07-03
+4,4,7,0,No rating given,2024-07-04
+5,5,9,4.2,Helped me understand Java better,2024-07-05
+6,6,11,5.1,Excellent book!,2024-07-06
+7,7,2,3.8,Useful but a bit outdated,2024-07-07
+8,8,4,2.5,Too technical for beginners,2024-07-08
+9,9,6,4.7,,2024-07-09
+10,10,8,-1,Invalid rating,2024-07-10
+11,11,10,4.0,Well written,2024-07-11
+12,12,12,5.0,Highly recommend!,2024-07-12

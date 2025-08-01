@@ -1,3 +1,6 @@
+"""
+# Things that I did first
+
 from datetime import date
 from typing import Optional
 from pydantic import EmailStr
@@ -66,3 +69,121 @@ class Review(Validators):
     rating: float
     comment: Optional[str] = None
     review_date: date
+"""
+
+from sqlalchemy import (Column, Integer, String, Date, Float, ForeignKey, Enum, Table,)
+from sqlalchemy.orm import relationship
+from database import Base
+import enum
+
+class MemberType(enum.Enum):
+    STUDENT = 'Student'
+    FACULTY = 'Faculty'
+
+book_author = Table(
+    'book_author',
+    Base.metadata,
+    Column('book_id', Integer, ForeignKey('book.book_id'), primary_key=True),
+    Column('author_id', Integer, ForeignKey('author.author_id'), primary_key=True)
+)
+
+book_category = Table(
+    'book_category',
+    Base.metadata,
+    Column('book_id', Integer, ForeignKey('book.book_id'), primary_key=True),
+    Column('category_id', Integer, ForeignKey('category.category_id'), primary_key=True)
+)
+
+#Models
+class Library(Base):
+    __tablename__ = 'libraries'
+    library_id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)
+    campus_location = Column(String(250), nullable=False)
+    contact_email = Column(String(100), nullable=False)
+    phone_number = Column(String(15), nullable=True)
+    books = relationship("Book", back_populates="library")
+
+class Book(Base):
+    __tablename__= 'book'
+    book_id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(255), nullable=False)
+    isbn = Column(String(13), nullable=True)
+    publication_date = Column(Date, nullable=False)
+    total_copies = Column(Integer, nullable=False)
+    available_copies = Column(Integer, nullable=False)
+    library_id = Column(Integer, ForeignKey('libraries.library_id'), nullable=False)
+    library = relationship("Library", back_populates="books")
+    author = relationship(
+        "Author",
+        secondary=book_author,
+        back_populates="books"
+    )
+    category = relationship(
+        "Category",
+        secondary=book_category,
+        back_populates="books"
+    )
+    review = relationship("Review", back_populates="book")
+    borrowing = relationship("Borrowing", back_populates="book")
+
+
+class Author(Base):
+    __tablename__ = 'author'
+    author_id = Column(Integer, primary_key=True, autoincrement=True)
+    first_name = Column(String(50), nullable=False)
+    last_name = Column(String(50), nullable=False)
+    birth_date = Column(Date, nullable=True)
+    nationality = Column(String(50), nullable=False)
+    biography = Column(String(1000), nullable=True)
+    books = relationship(
+        "Book",
+        secondary=book_author,
+        back_populates="author"
+    )
+
+class Category(Base):
+    __tablename__ = "category"
+    category_id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)
+    description = Column(String(250), nullable=True)
+    books = relationship(
+        "Book",
+        secondary=book_category,
+        back_populates="category"
+    )
+
+class Member(Base):
+    __tablename__ = "member"
+    member_id = Column(Integer, primary_key=True, autoincrement=True)
+    first_name = Column(String(50), nullable=False)
+    last_name = Column(String(50), nullable=False)
+    email = Column(String(100), nullable=False)
+    phone = Column(String(15), nullable=True)
+    member_type = Column(Enum(MemberType), nullable=False)
+    registration_date = Column(Date, nullable=False)
+    borrowing = relationship("Borrowing", back_populates="member")
+    review = relationship("Review", back_populates="member")
+
+class Borrowing(Base):
+    __tablename__ = "borrowing"
+    borrowing_id = Column(Integer, primary_key=True, autoincrement=True)
+    member_id = Column(Integer, ForeignKey("member.member_id"), nullable=False)
+    book_id = Column(Integer, ForeignKey("book.book_id"), nullable=False)
+    borrow_date = Column(Date, nullable=False)
+    due_date = Column(Date, nullable=False)
+    return_date = Column(Date, nullable=True)
+    late_fee = Column(Float, nullable=True)
+    member = relationship("Member", back_populates="borrowing")
+    book = relationship("Book", back_populates="borrowing")
+
+class Review(Base):
+    __tablename__ = "review"
+    review_id = Column(Integer, primary_key=True, autoincrement=True)
+    member_id = Column(Integer, ForeignKey("member.member_id"), nullable=False)
+    book_id = Column(Integer, ForeignKey("book.book_id"), nullable=False)
+    rating = Column(Float, nullable=False)
+    comment = Column(String(1000), nullable=True)
+    review_date = Column(Date, nullable=True)
+    member = relationship("Member", back_populates="review")
+    book = relationship("Book", back_populates="review")

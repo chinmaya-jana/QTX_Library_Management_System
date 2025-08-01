@@ -1,5 +1,6 @@
 # This File contains Pydantic data Validation
 
+"""
 from enum import Enum
 
 from mypy.fixup import missing_info
@@ -94,3 +95,219 @@ class Validators(BaseModel):
 class MemberType(str, Enum):
     STUDENT = "Student"
     FACULTY = "Faculty"
+"""
+
+from datetime import date
+from typing import Optional
+from pydantic import BaseModel, EmailStr, ValidationError, field_validator, model_validator
+import logging
+from models import MemberType
+
+# LOGGING
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger("data_validation")
+
+class BaseValidator(BaseModel):
+    model_config = {
+        "from_attributes": True
+    }
+
+# ========== SCHEMAS ==========
+class LibrarySchema(BaseValidator):
+    library_id: Optional[int]
+    name: str
+    campus_location: str
+    contact_email: EmailStr
+    phone_number: Optional[str]
+
+    @field_validator("name", "campus_location")
+    def non_empty_checker(cls, v):
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip().title()
+
+    @field_validator('phone_number')
+    def phone_validator(cls, v):
+        if not v:
+            return None
+        cleaned = v.strip().replace('-', '')
+        if not cleaned.startswith('+1'):
+            raise ValueError("International Number always starts with '+1'")
+        if not cleaned[2:].isdigit():
+            raise ValueError("Phone number must be digit")
+        if not len(cleaned[2:]) == 10:
+            raise ValueError("Phone number must be 10 digit")
+        return cleaned
+
+
+class AuthorSchema(BaseValidator):
+    author_id: Optional[int]
+    first_name: str
+    last_name: str
+    birth_date: Optional[date]
+    nationality: Optional[str]
+    biography: Optional[str]
+
+    @field_validator("first_name", "last_name")
+    def name_must_alphabetic(cls, v):
+        if not v.strip().replace(" ", "").isalpha():
+            raise ValueError("must contain only letters")
+        return v.strip().title()
+
+
+class CategorySchema(BaseValidator):
+    category_id: Optional[int]
+    name: str
+    description: Optional[str]
+
+    @field_validator("name")
+    def name_must_alphabetic(cls, v):
+        if not v.strip().replace(" ", "").isalpha():
+            raise ValueError("must contain only letters")
+        return v.strip().title()
+
+
+class BookSchema(BaseValidator):
+    book_id: Optional[int]
+    title: str
+    isbn: Optional[str]
+    publication_date: date
+    total_copies: int
+    available_copies: int
+    library_id: int
+
+    @field_validator("title")
+    def title_not_empty(cls, v):
+        if not v.strip():
+            raise ValueError("title must not be empty")
+        return v.strip().title()
+
+    @field_validator("isbn")
+    def isbn_check(cls, v):
+        if v is None:
+            return v
+        clean = v.replace("-", "").replace(" ", "")
+        if not clean.isdigit() or len(clean) not in (10, 13):
+            raise ValueError("ISBN must be 10 or 13 digits")
+        if not (clean.startswith("978") or clean.startswith("979")):
+            raise ValueError("ISBN must start with 978 or 979")
+        return clean
+
+    @field_validator("total_copies")
+    def total_copies_always_positive(cls, v):
+        if v <= 0:
+            raise ValueError("total_copies must be positive")
+        return v
+
+    @model_validator(mode="after")
+    def validate_copies_consistency(self) -> "BookSchema":
+        if self.available_copies < 0:
+            raise ValueError("available_copies cannot be negative")
+        if self.available_copies > self.total_copies:
+            raise ValueError("available_copies cannot exceed total_copies")
+        return self
+
+
+class MemberSchema(BaseValidator):
+    member_id: Optional[int]
+    first_name: str
+    last_name: str
+    email: EmailStr
+    phone: Optional[str]
+    member_type: MemberType
+    registration_date: date
+
+    @field_validator("first_name", "last_name")
+    def clean_name(cls, v):
+        if not v.strip().replace(" ", "").isalpha():
+            raise ValueError("must contain only letters")
+        return v.strip().title()
+
+    @field_validator("phone")
+    def phone_format(cls, v):
+        if v is None:
+            return v
+        clean = v.strip().replace("-", "").replace(" ", "")
+        if not clean.startswith("+1"):
+            raise ValueError("phone must start with +1")
+        if not clean[2:].isdigit() or len(clean[2:]) != 10:
+            raise ValueError("phone must have 10 digits after country code")
+        return clean
+
+
+class BorrowingSchema(BaseValidator):
+    borrowing_id: Optional[int]
+    member_id: int
+    book_id: int
+    borrow_date: date
+    due_date: date
+    return_date: Optional[date]
+    late_fee: Optional[float]
+
+    @field_validator("due_date")
+    def due_after_borrow(cls, v, info):
+        borrow_date = info.data.get("borrow_date")
+        if borrow_date and v < borrow_date:
+            raise ValueError("due_date must be after borrow_date")
+        return v
+
+    @field_validator("return_date")
+    def return_after_borrow(cls, v, info):
+        borrow_date = info.data.get("borrow_date")
+        if v and borrow_date and v < borrow_date:
+            raise ValueError("return_date cannot be before borrow_date")
+        return v
+
+    @field_validator("late_fee")
+    def fee_non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("late_fee cannot be negative")
+        return v
+
+
+class ReviewSchema(BaseValidator):
+    review_id: Optional[int]
+    member_id: int
+    book_id: int
+    rating: float
+    comment: Optional[str]
+    review_date: Optional[date]
+
+    @field_validator("rating")
+    def rating_range(cls, v):
+        if not (1 <= v <= 5):
+            raise ValueError("rating must be between 1 and 5")
+        return v
+
+
+# ========== VALIDATION TRACKING ==========
+class ValidationTracker:
+    def __init__(self):
+        self.total = 0
+        self.valid = 0
+        self.invalid = 0
+
+    def log_valid(self):
+        self.valid += 1
+        self.total += 1
+
+    def log_invalid(self):
+        self.invalid += 1
+        self.total += 1
+
+    def report(self, schema_name):
+        logger.info(f"\n[Validation Summary: {schema_name}]")
+        logger.info(f"====>Valid rows:   {self.valid}")
+        logger.info(f"====>Invalid rows: {self.invalid}")
+        logger.info(f"====>Total rows:   {self.total}\n")
+
+
+def validate_and_log(schema_class, row: dict, tracker: ValidationTracker):
+    try:
+        obj = schema_class(**row)
+        tracker.log_valid()
+        return obj
+    except ValidationError as e:
+        tracker.log_invalid()
+        logger.warning(f"Invalid row for {schema_class.__name__}: {e.errors()}")
+        return None
