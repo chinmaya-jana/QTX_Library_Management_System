@@ -39,25 +39,22 @@ def main():
 if __name__ == "__main__":
     main()
 """
-
 import os
 import csv
-import logging
-import argparse
 from datetime import datetime
+import argparse
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
+from database import get_engine_and_session, Base
 from models import *
-from schemas import *
-from schemas import validate_and_log, ValidationTracker
-from sqlalchemy.orm import declarative_base
+from schemas import (
+    LibrarySchema, AuthorSchema, CategorySchema, BookSchema,
+    MemberSchema, ReviewSchema, BorrowingSchema,
+    validate_and_log, ValidationTracker
+)
+from logs import logger
 
-# We don't import database.py because DB URL is dynamic from CLI
-Base = declarative_base()
 
-# Mapping CSV file names to (Schema, Model) tuples
+# === Mapping and Order ===
 FILE_SCHEMA_MODEL_MAPPING = {
     "library.csv": (LibrarySchema, Library),
     "author.csv": (AuthorSchema, Author),
@@ -68,87 +65,118 @@ FILE_SCHEMA_MODEL_MAPPING = {
     "borrowing.csv": (BorrowingSchema, Borrowing),
 }
 
+PROCESS_ORDER = [
+    "library.csv",
+    "author.csv",
+    "category.csv",
+    "book.csv",
+    "member.csv",
+    "review.csv",
+    "borrowing.csv",
+]
+
+
+# === CLI Argument Parser ===
 def get_args():
-    parser = argparse.ArgumentParser(
-        description="Load CSV data into MySQL DB with validation"
+    parser = argparse.ArgumentParser(description="Load CSV data into DB with validation")
+    parser.add_argument(
+        "-d", "--directory", required=True,
+        help="Directory path containing the CSV files"
     )
     parser.add_argument(
-        "-d", "--directory",
-        required=True,
-        help="Path to directory containing CSV files"
+        "--database-url", "--db", required=True,
+        help="Database URL, e.g. mysql+pymysql://user:pass@host/dbname"
     )
     parser.add_argument(
-        "--database-url", "--db",
-        required=True,
-        help="Database connection URL, e.g. mysql+pymysql://user:pass@host/dbname"
-    )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
+        "--log-level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging level"
     )
     return parser.parse_args()
 
-def setup_logging(log_level):
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper(), logging.INFO),
-        format="%(levelname)s: %(message)s"
-    )
-    return logging.getLogger(__name__)
 
-def load_and_insert_data(file_path, schema_class, model_class, session, logger):
+# === Logging Setup ===
+def setup_logging(log_level):
+    import logging
+    numeric_level = getattr(logging, log_level.upper(), logging.INFO)
+    logger.setLevel(numeric_level)
+    return logger
+
+
+# === Data Loader & Validator ===
+def load_and_insert_data(file_path, schema_class, model_class, session):
     if not os.path.exists(file_path):
-        logger.warning(f"❌ File not found: {file_path}")
+        logger.warning(f"File not found: {file_path}")
         return
 
     tracker = ValidationTracker()
-    with open(file_path, newline='', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            # Normalize empty strings and parse dates
-            for key, value in row.items():
-                if value == "":
-                    row[key] = None
-                elif "date" in key.lower() and value:
-                    try:
-                        row[key] = datetime.strptime(value.strip(), "%Y-%m-%d").date()
-                    except Exception:
-                        # Let schema validation handle date format errors
-                        pass
 
-            obj = validate_and_log(schema_class, row, tracker)
-            if obj:
-                try:
+    with open(file_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        if None in reader.fieldnames:
+            logger.error(f"{file_path} has missing column headers. Please fix the CSV file.")
+            return
+
+        for line_no, row in enumerate(reader, start=2):  # start=2 to skip header
+            try:
+                for key, value in row.items():
+                    if key is None:
+                        continue
+                    if value == "":
+                        row[key] = None
+                    elif "date" in key.lower() and value:
+                        try:
+                            row[key] = datetime.strptime(value.strip(), "%Y-%m-%d").date()
+                        except Exception:
+                            pass
+
+                obj = validate_and_log(schema_class, row, tracker)
+                if obj:
                     db_obj = model_class(**obj.model_dump())
                     session.add(db_obj)
-                except Exception as e:
-                    logger.error(f"❌ DB insertion error for row: {e}")
 
-    session.commit()
+            except Exception as e:
+                pk_field = getattr(schema_class, "primary_key", "unknown_id")
+                pk_value = row.get(pk_field, "N/A")
+                logger.error(
+                    f"Line {line_no} → DB error for {pk_field}={pk_value}: {e}"
+                )
+
+    try:
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Failed to commit data from {file_path}: {e}")
+
     tracker.report(os.path.basename(file_path))
 
 
+# === Main Runner ===
 def main():
     args = get_args()
-    logger = setup_logging(args.log_level)
+    setup_logging(args.log_level)
 
-    logger.info(f"Connecting to DB: {args.database_url}")
-    engine = create_engine(args.database_url, echo=False)
+    logger.info(f"Connecting to database at {args.database_url}")
+    engine, SessionLocal = get_engine_and_session(args.database_url)
 
-    # Create all tables from models automatically
     Base.metadata.create_all(bind=engine)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = SessionLocal()
 
     try:
-        for file_name, (schema_class, model_class) in FILE_SCHEMA_MODEL_MAPPING.items():
-            full_path = os.path.join(args.directory, file_name)
-            logger.info(f"📥 Processing file: {file_name}")
-            load_and_insert_data(full_path, schema_class, model_class, session, logger)
+        for filename in PROCESS_ORDER:
+            schema_class, model_class = FILE_SCHEMA_MODEL_MAPPING[filename]
+            filepath = os.path.join(args.directory, filename)
+            logger.info(f"Processing file: {filename}")
+            load_and_insert_data(filepath, schema_class, model_class, session)
+
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+
     finally:
         session.close()
-        logger.info("Processing completed, session closed.")
+        logger.info("All processing completed. Session closed.")
+
 
 if __name__ == "__main__":
     main()

@@ -91,21 +91,16 @@ class Validators(BaseModel):
             raise ValueError("Available copies cannot exceed total copies")
         return v
 
-
 class MemberType(str, Enum):
     STUDENT = "Student"
     FACULTY = "Faculty"
 """
 
-from datetime import date
-from typing import Optional
 from pydantic import BaseModel, EmailStr, ValidationError, field_validator, model_validator
-import logging
-from models import MemberType
-
-# LOGGING
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-logger = logging.getLogger("data_validation")
+from datetime import date
+from typing import Optional, ClassVar, Dict, Tuple, Any
+from models import *
+from logs import logger
 
 class BaseValidator(BaseModel):
     model_config = {
@@ -114,6 +109,8 @@ class BaseValidator(BaseModel):
 
 # ========== SCHEMAS ==========
 class LibrarySchema(BaseValidator):
+    primary_key: ClassVar[str] = "library_id"
+
     library_id: Optional[int]
     name: str
     campus_location: str
@@ -141,6 +138,8 @@ class LibrarySchema(BaseValidator):
 
 
 class AuthorSchema(BaseValidator):
+    primary_key: ClassVar[str] = "author_id"
+
     author_id: Optional[int]
     first_name: str
     last_name: str
@@ -156,6 +155,8 @@ class AuthorSchema(BaseValidator):
 
 
 class CategorySchema(BaseValidator):
+    primary_key: ClassVar[str] = "category_id"
+
     category_id: Optional[int]
     name: str
     description: Optional[str]
@@ -168,6 +169,8 @@ class CategorySchema(BaseValidator):
 
 
 class BookSchema(BaseValidator):
+    primary_key: ClassVar[str] = "book_id"
+
     book_id: Optional[int]
     title: str
     isbn: Optional[str]
@@ -209,6 +212,8 @@ class BookSchema(BaseValidator):
 
 
 class MemberSchema(BaseValidator):
+    primary_key: ClassVar[str] = "member_id"
+
     member_id: Optional[int]
     first_name: str
     last_name: str
@@ -236,6 +241,12 @@ class MemberSchema(BaseValidator):
 
 
 class BorrowingSchema(BaseValidator):
+    primary_key: ClassVar[str] = "borrowing_id"
+    foreign_keys: ClassVar[Dict[str, Tuple[Any, str]]] = {
+        "member_id": (Member, "member_id"),
+        "book_id": (Book, "book_id"),
+    }
+
     borrowing_id: Optional[int]
     member_id: int
     book_id: int
@@ -264,8 +275,13 @@ class BorrowingSchema(BaseValidator):
             raise ValueError("late_fee cannot be negative")
         return v
 
-
 class ReviewSchema(BaseValidator):
+    primary_key: ClassVar[str] = "review_id"
+    foreign_keys: ClassVar[Dict[str, Tuple[Any, str]]] = {
+        "member_id": (Member, "member_id"),
+        "book_id": (Book, "book_id"),
+    }
+
     review_id: Optional[int]
     member_id: int
     book_id: int
@@ -278,7 +294,6 @@ class ReviewSchema(BaseValidator):
         if not (1 <= v <= 5):
             raise ValueError("rating must be between 1 and 5")
         return v
-
 
 # ========== VALIDATION TRACKING ==========
 class ValidationTracker:
@@ -295,19 +310,31 @@ class ValidationTracker:
         self.invalid += 1
         self.total += 1
 
+    def reset(self):
+        self.total = self.valid = self.invalid = 0
+
     def report(self, schema_name):
+        success_rate = (self.valid / self.total * 100) if self.total else 0
         logger.info(f"\n[Validation Summary: {schema_name}]")
         logger.info(f"====>Valid rows:   {self.valid}")
         logger.info(f"====>Invalid rows: {self.invalid}")
         logger.info(f"====>Total rows:   {self.total}\n")
+        logger.info(f"====> Success rate: {success_rate:.1f}%\n")
 
-
-def validate_and_log(schema_class, row: dict, tracker: ValidationTracker):
+def validate_and_log(schema_class, row: dict, tracker: ValidationTracker) -> Optional[BaseValidator]:
     try:
         obj = schema_class(**row)
         tracker.log_valid()
         return obj
     except ValidationError as e:
         tracker.log_invalid()
-        logger.warning(f"Invalid row for {schema_class.__name__}: {e.errors()}")
+
+        pk_field = getattr(schema_class, "primary_key", "unknown_id")
+        pk_value = row.get(pk_field, "N/A")
+
+        for error in e.errors():
+            field = ".".join(str(loc) for loc in error.get("loc", []))
+            message = error.get('msg', 'Validation error')
+            logger.warning(f"{pk_field} ({pk_value}) - {field}: {message}")
+
         return None
