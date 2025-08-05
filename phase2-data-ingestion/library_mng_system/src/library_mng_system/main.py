@@ -39,6 +39,8 @@ def main():
 if __name__ == "__main__":
     main()
 """
+
+"""
 import os
 import csv
 from datetime import datetime
@@ -52,7 +54,6 @@ from schemas import (
     validate_and_log, ValidationTracker
 )
 from logs import logger
-
 
 # === Mapping and Order ===
 FILE_SCHEMA_MODEL_MAPPING = {
@@ -74,7 +75,6 @@ PROCESS_ORDER = [
     "review.csv",
     "borrowing.csv",
 ]
-
 
 # === CLI Argument Parser ===
 def get_args():
@@ -101,7 +101,6 @@ def setup_logging(log_level):
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
     logger.setLevel(numeric_level)
     return logger
-
 
 # === Data Loader & Validator ===
 def load_and_insert_data(file_path, schema_class, model_class, session):
@@ -176,6 +175,132 @@ def main():
     finally:
         session.close()
         logger.info("All processing completed. Session closed.")
+
+
+if __name__ == "__main__":
+    main()
+"""
+import argparse
+import os
+import csv
+import logging
+from pathlib import Path
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from schemas import (
+    LibrarySchema,
+    AuthorSchema,
+    CategorySchema,
+    BookSchema,
+    MemberSchema,
+    BorrowingSchema,
+    ReviewSchema,
+    BookAuthorSchema,
+    BookCategorySchema,
+    ValidationTracker,
+    process_row,
+)
+from logs import logger  # your configured logger
+from models import Base  # Import SQLAlchemy declarative base
+
+# Map CSV filenames to schema classes in order of dependency (no FK first, FK later)
+PROCESS_ORDER = [
+    ("libraries.csv", LibrarySchema),
+    ("authors.csv", AuthorSchema),
+    ("categories.csv", CategorySchema),
+    ("members.csv", MemberSchema),
+    ("books.csv", BookSchema),
+    ("borrowings.csv", BorrowingSchema),
+    ("reviews.csv", ReviewSchema),
+    ("book_authors.csv", BookAuthorSchema),
+    ("book_categories.csv", BookCategorySchema),
+]
+
+
+def read_csv(filepath):
+    with open(filepath, newline='', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        return list(reader)
+
+
+def setup_db(db_url):
+    engine = create_engine(db_url)
+    Session = sessionmaker(bind=engine)
+    return Session(), engine
+
+
+def create_tables(engine):
+    logger.info("Creating database tables if they don't exist...")
+    Base.metadata.create_all(engine)
+    logger.info("Tables created or verified.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Library Management System Data Loader")
+    parser.add_argument("--directory", required=True, help="Path to directory containing CSV files")
+    parser.add_argument("--db", required=True, help="Database URL (SQLAlchemy format)")
+    parser.add_argument("--log-level", default="INFO", help="Logging level (DEBUG, INFO, WARNING, ERROR)")
+
+    args = parser.parse_args()
+
+    # Setup root logger level to avoid double logs from root and your custom logger
+    numeric_level = getattr(logging, args.log_level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError(f"Invalid log level: {args.log_level}")
+
+    logging.basicConfig(level=numeric_level, format="%(levelname)s: %(message)s")
+    logger.setLevel(numeric_level)
+
+    data_dir = Path(args.directory)
+    if not data_dir.is_dir():
+        logger.error(f"Directory does not exist: {data_dir}")
+        return
+
+    # Setup DB session and engine
+    session, engine = setup_db(args.db)
+
+    # Create tables before importing data
+    create_tables(engine)
+
+    # Setup validation trackers
+    trackers = {schema.__name__.replace("Schema", ""): ValidationTracker() for _, schema in PROCESS_ORDER}
+
+    for filename, schema_class in PROCESS_ORDER:
+        file_path = data_dir / filename
+        if not file_path.exists():
+            logger.warning(f"CSV file missing, skipping: {file_path}")
+            continue
+
+        rows = read_csv(file_path)
+        tracker = trackers[schema_class.__name__.replace("Schema", "")]
+        logger.info(f"Processing {filename} with {len(rows)} rows...")
+
+        for row_num, row in enumerate(rows, start=2):
+            # Normalize empty strings to None for proper validation
+            for k, v in row.items():
+                if v == "":
+                    row[k] = None
+
+            try:
+                # process_row handles validation, FK checks and DB insertion using the session
+                process_row(schema_class, row, tracker, session=session)
+            except Exception as e:
+                pk_field = getattr(schema_class, "primary_key", None)
+                pk_val = row.get(pk_field, "N/A") if pk_field else "N/A"
+                logger.warning(
+                    f"Row {row_num} in {filename} DB insert error for {schema_class.__name__} ({pk_val}): {e}")
+                tracker.log_invalid()
+
+        try:
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to commit transactions for {filename}: {e}")
+
+        tracker.report(schema_class.__name__)
+
+    session.close()
+    logger.info("Data import completed.")
 
 
 if __name__ == "__main__":

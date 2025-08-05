@@ -1,105 +1,11 @@
 # This File contains Pydantic data Validation
-
-"""
-from enum import Enum
-
-from mypy.fixup import missing_info
-from pydantic import field_validator, BaseModel, EmailStr
-from typing import Optional
-
-class Validators(BaseModel):
-    #ISBN Validation: - Validate ISBN-10 and ISBN-13 formats - Remove hyphens and spaces - Verify check digits
-    @field_validator("isbn", check_fields=False)
-    def validate_isbn(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        cleaned = v.strip().replace("-", "").replace(" ", "")
-        if not cleaned.isdigit() or len(cleaned) not in (10, 13):
-            raise ValueError("ISBN must be 10 or 13 digits")
-        if not (cleaned.startswith("978") or cleaned.startswith("979")):
-            raise ValueError("ISBN must start with 978 or 979")
-        return v
-
-
-    #Email Validation: - Use Pydantic's EmailStr type - Handle malformed email addresses gracefully
-    @field_validator("email", "contact_email", check_fields=False)
-    def email_validate(cls, v: EmailStr) -> EmailStr:
-        if not v.strip():
-            raise missing_info('Email must be non empty')
-        if not EmailStr._validate(v):
-            raise ValueError('Email format is invalid, read carefully email format')
-        return v
-
-    #Name Normalization: - Standardize name capitalization (Title Case) -
-    # Handle multiple name variations for the same person - Trim whitespace
-    @field_validator('first_name', 'last_name', check_fields=False)
-    def human_name_validation(cls, v: str) -> str:
-        if not v:
-            raise ValueError('Name must be non empty')
-        if not v.strip().replace(' ', '').isalpha():
-            raise ValueError('Name must be alphabet')
-        return v[0].upper() + v[1:].lower()
-
-    # here handle 'Category': 'name', 'Library': 'name' and 'Book': 'title' name
-    @field_validator('name', 'title', check_fields=False)
-    def name_validation(cls, v: str) -> str:
-        name = v.split()
-        if not name:
-            raise ValueError('Name/title must not be empty')
-        if not v.strip().replace(' ', '').isalpha():
-            raise ValueError('Name/title only contains alphabet')
-
-        for index, word in enumerate(name):
-            name[index] = word[0].upper() + word[1:].lower()
-        result = ' '.join(name)
-        return result
-
-    #Phone Number Normalization: - Extract digits only - Format to standard pattern
-    #(e.g., +1-XXX-XXX-XXXX) - Handle international formats
-    @field_validator('phone', 'phone_number', check_fields=False)
-    def phone_number_validate(cls, v: Optional[str])-> Optional[str]:
-        if not v:
-            return None
-
-        cleaned = v.strip().replace('-','')
-        if not cleaned.startswith('+1'):
-            raise ValueError("International Number always starts with '+1'")
-        if not cleaned[2:].isdigit():
-            raise ValueError("Phone number must be digit")
-        if not len(cleaned[2:]) == 10:
-            raise ValueError("Phone number must be 10 digit")
-        return cleaned[2:]
-
-    @field_validator("title", check_fields=False)
-    def validate_title(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("Title must be non-empty")
-        return v
-
-    @field_validator("total_copies", check_fields=False)
-    def validate_total_copies(cls, v: int) -> int:
-        if v <= 0:
-            raise ValueError("Total copies must be positive")
-        return v
-
-    @field_validator("available_copies", check_fields=False)
-    def validate_available_copies(cls, v: int, info) -> int:
-        total = info.data.get("total_copies")
-        if v < 0:
-            raise ValueError("Available copies cannot be negative")
-        if total is not None and v > total:
-            raise ValueError("Available copies cannot exceed total copies")
-        return v
-
-class MemberType(str, Enum):
-    STUDENT = "Student"
-    FACULTY = "Faculty"
-"""
-
-from pydantic import BaseModel, EmailStr, ValidationError, field_validator, model_validator
+import re
+import phonenumbers
+from phonenumbers import NumberParseException
+from pydantic import BaseModel, EmailStr, ValidationError, field_validator, model_validator, confloat
 from datetime import date
-from typing import Optional, ClassVar, Dict, Tuple, Any
-from models import *
+from typing import Optional, ClassVar, Dict, Tuple, Any, Union
+from models import Member, Book, Author, Category, Library, Borrowing, Review, MemberType, BookAuthor, BookCategory
 from logs import logger
 
 class BaseValidator(BaseModel):
@@ -109,7 +15,7 @@ class BaseValidator(BaseModel):
 
 # ========== SCHEMAS ==========
 class LibrarySchema(BaseValidator):
-    primary_key: ClassVar[str] = "library_id"
+    primary_key: ClassVar[Union[str, Tuple[str, ...]]] = "library_id"
 
     library_id: Optional[int]
     name: str
@@ -123,22 +29,13 @@ class LibrarySchema(BaseValidator):
             raise ValueError("must not be empty")
         return v.strip().title()
 
-    @field_validator('phone_number')
-    def phone_validator(cls, v):
-        if not v:
-            return None
-        cleaned = v.strip().replace('-', '')
-        if not cleaned.startswith('+1'):
-            raise ValueError("International Number always starts with '+1'")
-        if not cleaned[2:].isdigit():
-            raise ValueError("Phone number must be digit")
-        if not len(cleaned[2:]) == 10:
-            raise ValueError("Phone number must be 10 digit")
-        return cleaned
+    @field_validator("phone_number")
+    def validate_phone(cls, v):
+        return validate_phone_global(v)
 
 
 class AuthorSchema(BaseValidator):
-    primary_key: ClassVar[str] = "author_id"
+    primary_key: ClassVar[Union[str, Tuple[str, ...]]] = "author_id"
 
     author_id: Optional[int]
     first_name: str
@@ -149,13 +46,11 @@ class AuthorSchema(BaseValidator):
 
     @field_validator("first_name", "last_name")
     def name_must_alphabetic(cls, v):
-        if not v.strip().replace(" ", "").isalpha():
-            raise ValueError("must contain only letters")
-        return v.strip().title()
+        return name_validator(v)
 
 
 class CategorySchema(BaseValidator):
-    primary_key: ClassVar[str] = "category_id"
+    primary_key: ClassVar[Union[str, Tuple[str, ...]]] = "category_id"
 
     category_id: Optional[int]
     name: str
@@ -163,13 +58,14 @@ class CategorySchema(BaseValidator):
 
     @field_validator("name")
     def name_must_alphabetic(cls, v):
-        if not v.strip().replace(" ", "").isalpha():
-            raise ValueError("must contain only letters")
-        return v.strip().title()
-
+        return name_validator(v)
 
 class BookSchema(BaseValidator):
-    primary_key: ClassVar[str] = "book_id"
+    primary_key: ClassVar[Union[str, Tuple[str, ...]]] = "book_id"
+
+    foreign_keys: ClassVar[Dict[str, Tuple[Any, str]]] = {
+        "library_id": (Library, "library_id"),
+    }
 
     book_id: Optional[int]
     title: str
@@ -212,7 +108,7 @@ class BookSchema(BaseValidator):
 
 
 class MemberSchema(BaseValidator):
-    primary_key: ClassVar[str] = "member_id"
+    primary_key: ClassVar[Union[str, Tuple[str, ...]]] = "member_id"
 
     member_id: Optional[int]
     first_name: str
@@ -224,24 +120,16 @@ class MemberSchema(BaseValidator):
 
     @field_validator("first_name", "last_name")
     def clean_name(cls, v):
-        if not v.strip().replace(" ", "").isalpha():
-            raise ValueError("must contain only letters")
-        return v.strip().title()
+        return name_validator(v)
 
     @field_validator("phone")
-    def phone_format(cls, v):
-        if v is None:
-            return v
-        clean = v.strip().replace("-", "").replace(" ", "")
-        if not clean.startswith("+1"):
-            raise ValueError("phone must start with +1")
-        if not clean[2:].isdigit() or len(clean[2:]) != 10:
-            raise ValueError("phone must have 10 digits after country code")
-        return clean
+    def validate_phone(cls, v):
+        return validate_phone_global(v)
 
 
 class BorrowingSchema(BaseValidator):
-    primary_key: ClassVar[str] = "borrowing_id"
+    primary_key: ClassVar[Union[str, Tuple[str, ...]]] = "borrowing_id"
+
     foreign_keys: ClassVar[Dict[str, Tuple[Any, str]]] = {
         "member_id": (Member, "member_id"),
         "book_id": (Book, "book_id"),
@@ -275,8 +163,15 @@ class BorrowingSchema(BaseValidator):
             raise ValueError("late_fee cannot be negative")
         return v
 
+    @field_validator("borrow_date")
+    def borrow_date_not_in_future(cls, v):
+        if v > date.today():
+            raise ValueError("Borrow date must be in past")
+        return v
+
 class ReviewSchema(BaseValidator):
-    primary_key: ClassVar[str] = "review_id"
+    primary_key: ClassVar[Union[str, Tuple[str, ...]]] = "review_id"
+
     foreign_keys: ClassVar[Dict[str, Tuple[Any, str]]] = {
         "member_id": (Member, "member_id"),
         "book_id": (Book, "book_id"),
@@ -285,15 +180,51 @@ class ReviewSchema(BaseValidator):
     review_id: Optional[int]
     member_id: int
     book_id: int
-    rating: float
+    rating: confloat(ge=1, le=5)   #float
     comment: Optional[str]
     review_date: Optional[date]
 
-    @field_validator("rating")
-    def rating_range(cls, v):
-        if not (1 <= v <= 5):
-            raise ValueError("rating must be between 1 and 5")
-        return v
+class BookAuthorSchema(BaseValidator):
+    primary_key: ClassVar[Union[str, Tuple[str, ...]]] = ("book_id", "author_id")
+
+    foreign_keys: ClassVar[Dict[str, Tuple[Any, str]]] = {
+        "book_id": (Book, "book_id"),
+        "author_id": (Author, "author_id"),
+    }
+
+    book_id: int
+    author_id: int
+
+class BookCategorySchema(BaseValidator):
+    primary_key: ClassVar[Union[str, Tuple[str, ...]]] = ("book_id", "category_id")
+
+    foreign_keys: ClassVar[Dict[str, Tuple[Any, str]]] = {
+        "book_id": (Book, "book_id"),
+        "category_id": (Category, "category_id"),
+    }
+
+    book_id: int
+    category_id: int
+
+# Some common validation across models
+def validate_phone_global(phone: Optional[str]) -> Optional[str]:
+    if not phone:
+        return None
+    try:
+        # Try parsing with no region to force international format (+)
+        number = phonenumbers.parse(phone, None)
+        if not phonenumbers.is_valid_number(number):
+            raise ValueError("Invalid phone number")
+        # Return number in E.164 format: +12345678900
+        return phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
+
+    except NumberParseException as e:
+        raise ValueError(f"Invalid phone number format: {e}")
+
+def name_validator(name: Optional[str]) -> Optional[str]:
+    if not re.fullmatch(r"[A-Za-z\s\-']+", name.strip()):
+        raise ValueError("must contain only letters, spaces, hyphens or apostrophes")
+    return name.strip().title()
 
 # ========== VALIDATION TRACKING ==========
 class ValidationTracker:
@@ -329,12 +260,91 @@ def validate_and_log(schema_class, row: dict, tracker: ValidationTracker) -> Opt
     except ValidationError as e:
         tracker.log_invalid()
 
-        pk_field = getattr(schema_class, "primary_key", "unknown_id")
-        pk_value = row.get(pk_field, "N/A")
+        # UPDATED to handle tuple or str primary_key (composite keys support)
+        pk_fields = getattr(schema_class, "primary_key", ("unknown_id",))
+        if not isinstance(pk_fields, (list, tuple)):
+            pk_fields = (pk_fields,)
+
+        pk_value = ", ".join(str(row.get(pk, "N/A")) for pk in pk_fields)
 
         for error in e.errors():
             field = ".".join(str(loc) for loc in error.get("loc", []))
             message = error.get('msg', 'Validation error')
-            logger.warning(f"{pk_field} ({pk_value}) - {field}: {message}")
+            logger.warning(f"{pk_fields} ({pk_value}) - {field}: {message}")
 
         return None
+
+
+def check_foreign_keys(schema_obj) -> bool:
+    """
+    Check all foreign keys defined on schema_obj exist in DB.
+    Logs warning if any foreign key is missing or not found.
+    Returns True if all foreign keys exist, else False.
+    """
+    fk_map = getattr(schema_obj.__class__, "foreign_keys", {})
+    for fk_field, (model_cls, model_pk) in fk_map.items():
+        fk_value = getattr(schema_obj, fk_field, None)
+        # FK field missing in the schema object (e.g., None or absent)
+        if fk_value is None:
+            logger.warning(
+                f"{schema_obj.__class__.__name__} ({getattr(schema_obj, schema_obj.primary_key if isinstance(schema_obj.primary_key, str) else schema_obj.primary_key[0], 'N/A')})"
+                f": Missing foreign key field '{fk_field}'"
+            )
+            return False
+        # FK value present but not found in DB via model_cls.get_by_pk()
+        if not model_cls.get_by_pk(fk_value):
+            logger.warning(
+                f"{schema_obj.__class__.__name__} ({getattr(schema_obj, schema_obj.primary_key if isinstance(schema_obj.primary_key, str) else schema_obj.primary_key[0], 'N/A')})"
+                f": Foreign key '{fk_field}' value '{fk_value}' not found in {model_cls.__name__}"
+            )
+            return False
+    return True
+
+def process_row(schema_class, row: dict, tracker: ValidationTracker, session=None):
+    """
+    Validates data using Pydantic schema, checks FK constraints, then
+    creates and inserts the corresponding SQLAlchemy model instance using the session.
+    """
+    if session is None:
+        raise ValueError("SQLAlchemy session is required")
+
+    # Step 1: Validate with Pydantic
+    schema_obj = validate_and_log(schema_class, row, tracker)
+    if schema_obj is None:
+        return None  # Validation failed
+
+    # Step 2: Check foreign key existence (optional)
+    if hasattr(schema_class, "foreign_keys") and schema_class.foreign_keys:
+        if not check_foreign_keys(schema_obj):
+            tracker.log_invalid()
+            return None
+
+    # Step 3: Convert to ORM model (use matching model class from schema)
+    try:
+        # Infer model class from schema name
+        model_class = {
+            "LibrarySchema": Library,
+            "AuthorSchema": Author,
+            "CategorySchema": Category,
+            "BookSchema": Book,
+            "MemberSchema": Member,
+            "BorrowingSchema": Borrowing,
+            "ReviewSchema": Review,
+            "BookAuthorSchema": BookAuthor,
+            "BookCategorySchema": BookCategory,
+        }.get(schema_class.__name__)
+
+        if not model_class:
+            raise ValueError(f"No ORM model found for {schema_class.__name__}")
+
+        orm_obj = model_class(**schema_obj.model_dump(exclude_none=True))
+        session.add(orm_obj)
+        tracker.log_valid()
+        return orm_obj
+
+    except Exception as e:
+        tracker.log_invalid()
+        pk = schema_obj.primary_key if isinstance(schema_obj.primary_key, str) else schema_obj.primary_key[0]
+        logger.warning(f"{schema_class.__name__} ({getattr(schema_obj, pk, 'N/A')}): DB insert error: {e}")
+        return None
+

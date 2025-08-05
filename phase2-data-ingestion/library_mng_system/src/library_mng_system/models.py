@@ -1,85 +1,12 @@
-"""
-# Things that I did first
-
-from datetime import date
-from typing import Optional
-from pydantic import EmailStr
-from schemas import Validators, MemberType
-
-
-class Book(Validators):
-    book_id: int     #Primary Key in db
-    title: str
-    publication_date: date
-    total_copies: int
-    available_copies: int
-    library_id: int
-    isbn: Optional[str] = None
-
-class Library(Validators):
-    library_id: int   #Primary Key in db
-    name: str
-    campus_location: str
-    contact_email: EmailStr
-    phone_number: Optional[str] = None
-
-class Author(Validators):
-    author_id: int     #Primary Key in db
-    first_name: str
-    last_name: str
-    birth_date: Optional[date] = None
-    nationality: Optional[str] = None
-    biography: Optional[str] = None
-
-class BookAuthor(Validators):
-    book_id: int       #Primary Key in db
-    author_id: int    #Primary Key in db
-
-class Category(Validators):
-    category_id: int   #Primary Key in db
-    name: str
-    description: Optional[str] = None
-
-class BookCategory(Validators):
-    book_id: int       #Primary Key in db
-    category_id: int   #Primary Key in db
-
-class Member(Validators):
-    member_id: int     #Primary Key in db
-    first_name: str
-    last_name: str
-    email: EmailStr
-    phone: str
-    member_type: Optional[MemberType] #{student/faculty}
-    registration_date: date
-
-class Borrowing(Validators):
-    borrowing_id: int  #Primary Key in db
-    member_id: int
-    book_id: int
-    borrow_date: date  #Borrow date won't be non-empty if borrowing_id is available
-    due_date: date
-    return_date: Optional[date] = None #Suppose someone borrowed the book and return not yet
-    late_fee: Optional[float] = None
-
-class Review(Validators):
-    review_id: int     #Primary Key
-    member_id: int
-    book_id: int
-    rating: float
-    comment: Optional[str] = None
-    review_date: date
-"""
-
-from sqlalchemy import (Column, Integer, String, Date, Float, ForeignKey, Enum, Table,)
-from sqlalchemy.orm import relationship
-from database import Base
+from sqlalchemy import (Column, Integer, String, Date, Float, ForeignKey, Enum, Table, UniqueConstraint)
+from sqlalchemy.orm import relationship, Session
+from database import Base, SessionLocal
 import enum
 
 class MemberType(enum.Enum):
     STUDENT = 'Student'
     FACULTY = 'Faculty'
-
+"""
 book_author = Table(
     'book_author',
     Base.metadata,
@@ -93,19 +20,85 @@ book_category = Table(
     Column('book_id', Integer, ForeignKey('book.book_id'), primary_key=True),
     Column('category_id', Integer, ForeignKey('category.category_id'), primary_key=True)
 )
+"""
+
+class CRUDMixin:
+    primary_key = []  # list or tuple of column names
+
+    @classmethod
+    def get_by_pk(cls, session: Session, *pk_values):
+        if not isinstance(cls.primary_key, (list, tuple)):
+            raise ValueError("primary_key must be a list or tuple of column names")
+
+        if len(pk_values) != len(cls.primary_key):
+            raise ValueError("Number of pk_values must match number of primary_key columns")
+
+        filters = [getattr(cls, key) == value for key, value in zip(cls.primary_key, pk_values)]
+        query = session.query(cls)
+        for condition in filters:
+            query = query.filter(condition)
+
+        return query.first()
+
+    def save(self, session: Session):
+        try:
+            session.add(self)
+            session.flush()  # flush, but don't commit yet
+        except Exception as e:
+            session.rollback()
+            raise e
+
+#
+class BookAuthor(CRUDMixin, Base):
+    __tablename__ = 'book_author'
+    primary_key = ['book_id', 'author_id']
+
+    book_id = Column(Integer, ForeignKey('book.book_id'), primary_key=True, autoincrement=False)
+    author_id = Column(Integer, ForeignKey('author.author_id'), primary_key=True, autoincrement=False)
+    book = relationship(
+        "Book",
+        back_populates="book_authors"
+    )
+    author = relationship(
+        "Author",
+        back_populates="book_authors"
+    )
+
+class BookCategory(CRUDMixin, Base):
+    __tablename__ = 'book_category'
+    primary_key = ['book_id', 'category_id']
+
+    book_id = Column(Integer, ForeignKey('book.book_id'), primary_key=True, autoincrement=False)
+    category_id = Column(Integer, ForeignKey('category.category_id'), primary_key=True, autoincrement=False)
+    book = relationship(
+        "Book",
+        back_populates="book_categories"
+    )
+    category = relationship(
+        "Category",
+        back_populates="book_categories"
+    )
 
 #Models
-class Library(Base):
+class Library(CRUDMixin, Base):
     __tablename__ = 'libraries'
+    primary_key = ['library_id']
+
     library_id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
     campus_location = Column(String(250), nullable=False)
     contact_email = Column(String(100), nullable=False)
     phone_number = Column(String(15), nullable=True)
-    books = relationship("Book", back_populates="library")
+    #One to many
+    books = relationship(
+        "Book",
+        back_populates="library"
+    )
 
-class Book(Base):
+class Book(CRUDMixin, Base):
     __tablename__= 'book'
+    primary_key = ['book_id']
+
     book_id = Column(Integer, primary_key=True, autoincrement=True)
     title = Column(String(255), nullable=False)
     isbn = Column(String(13), nullable=True)
@@ -113,48 +106,64 @@ class Book(Base):
     total_copies = Column(Integer, nullable=False)
     available_copies = Column(Integer, nullable=False)
     library_id = Column(Integer, ForeignKey('libraries.library_id'), nullable=False)
-    library = relationship("Library", back_populates="books")
-    author = relationship(
-        "Author",
-        secondary=book_author,
+
+    library = relationship(
+        "Library",
         back_populates="books"
     )
-    category = relationship(
-        "Category",
-        secondary=book_category,
-        back_populates="books"
+    borrowings = relationship(
+        "Borrowing",
+        back_populates="book"
     )
-    review = relationship("Review", back_populates="book")
-    borrowing = relationship("Borrowing", back_populates="book")
+    reviews = relationship(
+        "Review",
+        back_populates="book"
+    )
+    book_authors = relationship(
+        "BookAuthor",
+        back_populates="book",
+        cascade="all, delete-orphan"
+    )
+    book_categories = relationship(
+        "BookCategory",
+        back_populates="book",
+        cascade="all, delete-orphan"
+    )
 
-
-class Author(Base):
+class Author(CRUDMixin, Base):
     __tablename__ = 'author'
+    primary_key = ['author_id']
+
     author_id = Column(Integer, primary_key=True, autoincrement=True)
     first_name = Column(String(50), nullable=False)
     last_name = Column(String(50), nullable=False)
     birth_date = Column(Date, nullable=True)
     nationality = Column(String(50), nullable=False)
     biography = Column(String(1000), nullable=True)
-    books = relationship(
-        "Book",
-        secondary=book_author,
-        back_populates="author"
+
+    book_authors = relationship(
+        "BookAuthor",
+        back_populates="author",
+        cascade="all, delete-orphan"
     )
 
-class Category(Base):
+class Category(CRUDMixin, Base):
     __tablename__ = "category"
+    primary_key = ['category_id']
+
     category_id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
     description = Column(String(250), nullable=True)
-    books = relationship(
-        "Book",
-        secondary=book_category,
-        back_populates="category"
+    book_categories = relationship(
+        "BookCategory",
+        back_populates="category",
+        cascade="all, delete-orphan"
     )
 
-class Member(Base):
+class Member(CRUDMixin, Base):
     __tablename__ = "member"
+    primary_key = ['member_id']
+
     member_id = Column(Integer, primary_key=True, autoincrement=True)
     first_name = Column(String(50), nullable=False)
     last_name = Column(String(50), nullable=False)
@@ -162,11 +171,20 @@ class Member(Base):
     phone = Column(String(15), nullable=True)
     member_type = Column(Enum(MemberType), nullable=False)
     registration_date = Column(Date, nullable=False)
-    borrowing = relationship("Borrowing", back_populates="member")
-    review = relationship("Review", back_populates="member")
 
-class Borrowing(Base):
+    borrowings = relationship(
+        "Borrowing",
+        back_populates="member"
+    )
+    reviews = relationship(
+        "Review",
+        back_populates="member"
+    )
+
+class Borrowing(CRUDMixin, Base):
     __tablename__ = "borrowing"
+    primary_key = ['borrowing_id']
+
     borrowing_id = Column(Integer, primary_key=True, autoincrement=True)
     member_id = Column(Integer, ForeignKey("member.member_id"), nullable=False)
     book_id = Column(Integer, ForeignKey("book.book_id"), nullable=False)
@@ -174,16 +192,36 @@ class Borrowing(Base):
     due_date = Column(Date, nullable=False)
     return_date = Column(Date, nullable=True)
     late_fee = Column(Float, nullable=True)
-    member = relationship("Member", back_populates="borrowing")
-    book = relationship("Book", back_populates="borrowing")
 
-class Review(Base):
+    member = relationship(
+        "Member",
+        back_populates="borrowings"
+    )
+    book = relationship(
+        "Book",
+        back_populates="borrowings"
+    )
+
+class Review(CRUDMixin, Base):
     __tablename__ = "review"
+    primary_key = ['review_id']
+    # a member can only review a book once
+    __table_args__ = (
+        UniqueConstraint('member_id', 'book_id', name='uix_member_book_review'),
+    )
+
     review_id = Column(Integer, primary_key=True, autoincrement=True)
     member_id = Column(Integer, ForeignKey("member.member_id"), nullable=False)
     book_id = Column(Integer, ForeignKey("book.book_id"), nullable=False)
     rating = Column(Float, nullable=False)
     comment = Column(String(1000), nullable=True)
     review_date = Column(Date, nullable=True)
-    member = relationship("Member", back_populates="review")
-    book = relationship("Book", back_populates="review")
+
+    member = relationship(
+        "Member",
+        back_populates="reviews"
+    )
+    book = relationship(
+        "Book",
+        back_populates="reviews"
+    )
