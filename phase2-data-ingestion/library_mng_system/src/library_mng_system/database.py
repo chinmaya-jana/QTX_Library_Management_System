@@ -1,5 +1,3 @@
-#DATABASE_URL = "mysql+pymysql://root:Chintu%4024@localhost:3306/library_db" #lib_mng_system
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
