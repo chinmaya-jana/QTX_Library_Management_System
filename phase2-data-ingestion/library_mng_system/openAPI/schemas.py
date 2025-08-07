@@ -13,12 +13,10 @@ class BaseValidator(BaseModel):
 
 # ========== SCHEMAS ==========
 class AuthorSchema(BaseValidator):
-    primary_key: ClassVar[str] = "author_id"
-
     name: str
     birth_date: Union[date, str, None]
-    nationality: Optional[str]
-    biography: Optional[str]
+    nationality: Optional[str] = None
+    biography: Optional[str] = None
 
     @field_validator("name")
     def name_must_alphabetic(cls, v):
@@ -29,8 +27,6 @@ class AuthorSchema(BaseValidator):
         return date_validation(v)
 
 class BookSchema(BaseValidator):
-    primary_key: ClassVar[str] = "book_id"
-
     title: str
     isbn: Optional[str]
     publication_date: Union[date, str]
@@ -48,10 +44,16 @@ class BookSchema(BaseValidator):
         if v is None:
             return v
         clean = v.replace("-", "").replace(" ", "")
-        if not clean.isdigit() or len(clean) not in (10, 13):
-            raise ValueError("ISBN must be 10 or 13 digits")
-        if not (clean.startswith("978") or clean.startswith("979")):
-            raise ValueError("ISBN must start with 978 or 979")
+        if not clean.isdigit():
+            raise ValueError("ISBN must contain only digits (with optional hyphens/spaces)")
+        if len(clean) == 10:
+            if not validate_isbn10(clean):
+                raise ValueError("Invalid ISBN-10 format")
+        elif len(clean) == 13:
+            if not validate_isbn13(clean):
+                raise ValueError("Invalid ISBN-13 format")
+        else:
+            raise ValueError("ISBN must be either 10 or 13 digits long")
         return clean
 
     @field_validator("pages")
@@ -65,51 +67,68 @@ class BookSchema(BaseValidator):
         return date_validation(v)
 
 # ========= Common Validation Functions ==========
+def validate_isbn10(isbn: str) -> bool:
+    if len(isbn) != 10:
+        return False
+    total = 0
+    for i, char in enumerate(isbn):
+        if char == 'X' and i == 9:
+            total += 10
+        elif char.isdigit():
+            total += int(char) * (10 - i)
+        else:
+            return False
+    return total % 11 == 0
+
+def validate_isbn13(isbn: str) -> bool:
+    if len(isbn) != 13:
+        return False
+    total = 0
+    for i, char in enumerate(isbn):
+        if not char.isdigit():
+            return False
+        digit = int(char)
+        if i % 2 == 0:
+            total += digit
+        else:
+            total += 3 * digit
+    return total % 10 == 0
 
 def name_validator(name: Optional[str]) -> Optional[str]:
-    """Ensure the name contains only valid characters."""
     if not re.fullmatch(r"[A-Za-z\s\-']+", name.strip()):
         raise ValueError("must contain only letters, spaces, hyphens or apostrophes")
     return name.strip()
 
 def try_parse_date(v: str, fmt: str) -> Optional[date]:
-    """Attempt to parse a string into a date using the given format."""
     try:
         return datetime.strptime(v, fmt).date()
     except ValueError:
         return None
 
 def date_validation(v: Optional[Union[str, date]]) -> Optional[date]:
-    """Parse and validate a date string or object."""
     if v is None:
         return None
-
     if isinstance(v, date):
         return v
-
     if isinstance(v, str):
         v = v.strip()
-
         # Handle full ISO format with time
         try:
             return datetime.fromisoformat(v).date()
         except ValueError:
             pass
-
         # Try common formats
         common_formats = [
             "%Y-%m-%d",
-            "%d %B %Y",     # e.g. 7 February 1812
-            "%B %d, %Y",     # e.g. February 7, 1812
+            "%d %B %Y",     #ex: 7 February 1812
+            "%B %d, %Y",     #ex: February 7, 1812
             "%Y/%m/%d",
-            "%Y"            # year only
+            "%Y"            #ex: year only
         ]
-
         for fmt in common_formats:
             parsed = try_parse_date(v, fmt)
             if parsed:
                 return parsed
-
     raise ValueError(f"Unrecognized date format: {v}")
 
 # ========== VALIDATION TRACKING ==========

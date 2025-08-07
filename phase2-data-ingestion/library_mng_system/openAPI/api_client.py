@@ -1,39 +1,50 @@
-
 import time
 import requests
-from logs import logger
 
+BASE_URL = "https://openlibrary.org"
 
-class OpenLibraryAPIClient:
-    BASE_URL = "https://openlibrary.org"
-    RATE_LIMIT_SECONDS = 1  # 1 request per second
-
+class OpenLibraryClient:
     def __init__(self):
-        self.last_request_time = 0
+        self.session = requests.Session()
 
-    def _get(self, endpoint: str, params: dict = None) -> dict:
-        full_url = f"{self.BASE_URL}{endpoint}"
-        self._respect_rate_limit()
+    def search_author(self, author_name: str):
+        url = f"{BASE_URL}/search/authors.json?q={author_name}"
+        response = self.session.get(url)
+        time.sleep(1)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("docs"):
+                return data["docs"][0]  # Return best match
+        return None
 
-        try:
-            response = requests.get(full_url, params=params, timeout=10)
-            response.raise_for_status()
+    def get_author_details(self, author_key: str):
+        url = f"{BASE_URL}/authors/{author_key}.json"
+        response = self.session.get(url)
+        time.sleep(1)
+        if response.status_code == 200:
             return response.json()
-        except requests.RequestException as e:
-            logger.warning(f"API request failed: {e}")
-            return {}
+        return {}
 
-    def _respect_rate_limit(self):
-        elapsed = time.time() - self.last_request_time
-        if elapsed < self.RATE_LIMIT_SECONDS:
-            time.sleep(self.RATE_LIMIT_SECONDS - elapsed)
-        self.last_request_time = time.time()
+    def get_author_works(self, author_key: str, limit: int):
+        url = f"{BASE_URL}/authors/{author_key}/works.json?limit={limit}"
+        response = self.session.get(url)
+        time.sleep(1)
+        if response.status_code == 200:
+            return response.json().get("entries", [])
+        return []
 
-    def search_author(self, author_name: str) -> dict:
-        return self._get("/search/authors.json", params={"q": author_name})
+    def get_work_details(self, work_key: str):
+        url = f"{BASE_URL}/works/{work_key}.json"
+        response = self.session.get(url)
+        time.sleep(1)
+        if response.status_code == 200:
+            return response.json()
+        return None
 
-    def get_author_works(self, author_key: str, limit: int = 20) -> dict:
-        return self._get(f"/authors/{author_key}/works.json", params={"limit": limit})
-
-    def get_work_details(self, work_key: str) -> dict:
-        return self._get(f"/works/{work_key}.json")
+    def get_editions_for_work(self, work_key: str):
+        url = f"{BASE_URL}/works/{work_key}/editions.json?limit=5" # I set it as a limit 5
+        response = self.session.get(url)
+        time.sleep(1)
+        if response.status_code == 200:
+            return response.json()
+        return {}

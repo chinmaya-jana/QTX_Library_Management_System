@@ -9,7 +9,7 @@ class Book(Base):
 
     book_id = Column(Integer, primary_key=True, autoincrement=True)
     title = Column(String(255), nullable=False)
-    isbn = Column(String(13), nullable=True)
+    isbn = Column(String(20), nullable=True)
     publication_date = Column(Date, nullable=False)
     pages = Column(Integer, nullable=False)
     author_id = Column(Integer, ForeignKey('author.author_id'), nullable=False)
@@ -30,5 +30,6 @@ class Author(Base):
 
     books = relationship(
         "Book",
-        back_populates="author"
+        back_populates="author",
+        cascade="all, delete-orphan"
     )
