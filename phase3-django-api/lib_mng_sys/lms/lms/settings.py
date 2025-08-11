@@ -41,14 +41,9 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
+    'library',
 ]
-#*******************************************************
-EXTERNAL_APPS = [
-    'rest_framework',   # Enables Django REST Framework features
-    'library',          # Registers your app and its models
-]
-INSTALLED_APPS = INSTALLED_APPS + EXTERNAL_APPS
-#*******************************************************
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',

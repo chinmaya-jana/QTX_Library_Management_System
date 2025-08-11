@@ -104,6 +104,12 @@ class Member(models.Model):
     member_type = models.CharField(max_length=20, choices=MemberType.choices, null=False, blank=False)
     registration_date = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        db_table = "member"
+        ordering = ['registration_date'] #ASC order
+        verbose_name = "Member detail" #Book categories
+        verbose_name_plural = "Member details"
+
     def __str__(self):
         return f"{self.member_id} - ({self.first_name} {self.last_name}) - {self.member_type}"
 
