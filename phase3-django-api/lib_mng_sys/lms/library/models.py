@@ -33,7 +33,7 @@ class TimeStampedModel(models.Model):
         abstract = True   # ensures no separate table is created
 
 # Address model
-class Address(models.Model):
+class Address(TimeStampedModel):
     street = models.CharField(max_length=100)
     district = models.CharField(max_length=50)
     state = models.CharField(max_length=50)
@@ -49,8 +49,8 @@ class Address(models.Model):
         return f"{self.street}, {self.district}, {self.state}, {self.pin}, {self.country}"
 
 # Contact number model
-class ContactNumber(models.Model):
-    number = PhoneNumberField(region='IN') #example: 'US'
+class ContactNumber(TimeStampedModel):
+    number = PhoneNumberField(blank=True, null=True) #example: 'US'
     type = models.CharField(max_length=20, choices=ContactType.choices)
 
     class Meta:
@@ -60,13 +60,53 @@ class ContactNumber(models.Model):
     def __str__(self):
         return f"{self.number} ({self.type})"
 
+class BookLibrary(TimeStampedModel):
+    book = models.ForeignKey("Book", on_delete=models.CASCADE)
+    library = models.ForeignKey("Library", on_delete=models.CASCADE)
+
+    class Meta:
+        db_table = "book_library"
+        verbose_name = "Book Library"
+        verbose_name_plural = "Book Libraries"
+        unique_together = ('book', 'library')
+
+    def __str__(self):
+        return f"{self.book} - {self.library}"
+
+class BookAuthor(TimeStampedModel):
+    book = models.ForeignKey("Book", on_delete=models.CASCADE)
+    author = models.ForeignKey("Author", on_delete=models.CASCADE)
+
+    class Meta:
+        db_table = "book_author"
+        verbose_name = "Book Authors"
+        unique_together = ('book', 'author')
+
+    def __str__(self):
+        return f"{self.book} - {self.author}"
+
+class BookCategory(TimeStampedModel):
+    book = models.ForeignKey("Book", on_delete=models.CASCADE)
+    category = models.ForeignKey("Category", on_delete=models.CASCADE)
+
+    class Meta:
+        db_table = "book_category"
+        verbose_name = "Book Categories"
+        unique_together = ('book', 'category')
+
+    def __str__(self):
+        return f"{self.book} - {self.category}"
+
 # Library model
-class Library(models.Model):
+class Library(TimeStampedModel):
     library_id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=100)
-    campus_location = models.OneToOneField(Address,on_delete=models.CASCADE, null=True, blank=True)
+    campus_location = models.OneToOneField('Address', on_delete=models.CASCADE)
     contact_email = models.EmailField(unique=True, max_length=100)
-    phone_number = models.OneToOneField(ContactNumber, unique=True, on_delete=models.CASCADE, null=True, blank=True)
+    phone_number = models.OneToOneField('ContactNumber', unique=True, on_delete=models.CASCADE)
+
+    # relationship
+    books = models.ManyToManyField('Book', related_name='libraries', blank=True)
 
     class Meta:
         db_table = "libraries"
@@ -78,13 +118,13 @@ class Library(models.Model):
         return f"{self.library_id} - {self.name}"
 
 # Author model
-class Author(models.Model):
+class Author(TimeStampedModel):
     author_id = models.AutoField(primary_key=True)
-    first_name = models.CharField(max_length=50, null=False, blank=False)
-    last_name = models.CharField(max_length=50, null=False, blank=False)
-    birth_date = models.DateField(null=True, blank=True)
-    nationality = models.CharField(max_length=20, null=True, blank=True)
-    biography = models.CharField(max_length=200, null=True, blank=True)
+    first_name = models.CharField(max_length=50)
+    last_name = models.CharField(max_length=50)
+    birth_date = models.DateField()
+    nationality = models.CharField(max_length=20, default='Indian')
+    biography = models.CharField(max_length=200)
 
     class Meta:
         db_table = "author"
@@ -95,13 +135,13 @@ class Author(models.Model):
     def __str__(self):
         return f"{self.author_id} - {self.first_name} {self.last_name}"
 # Member model
-class Member(models.Model):
+class Member(TimeStampedModel):
     member_id = models.AutoField(primary_key=True)
-    first_name = models.CharField(max_length=50, null=False, blank=False)
-    last_name = models.CharField(max_length=50, null=False, blank=False)
-    email = models.EmailField(unique=True, max_length=100, null=False, blank=False)
-    phone = models.OneToOneField(ContactNumber, on_delete=models.CASCADE)
-    member_type = models.CharField(max_length=20, choices=MemberType.choices, null=False, blank=False)
+    first_name = models.CharField(max_length=50)
+    last_name = models.CharField(max_length=50)
+    email = models.EmailField(unique=True, max_length=100)
+    phone = models.OneToOneField(ContactNumber, on_delete=models.CASCADE, unique=True)
+    member_type = models.CharField(max_length=20, choices=MemberType.choices)
     registration_date = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -114,10 +154,10 @@ class Member(models.Model):
         return f"{self.member_id} - ({self.first_name} {self.last_name}) - {self.member_type}"
 
 # Book Category model
-class Category(models.Model):
+class Category(TimeStampedModel):
     category_id = models.AutoField(primary_key=True)
-    name = models.CharField(max_length=100, null=False, blank=False)
-    description = models.CharField(max_length=500, null=True, blank=True)
+    name = models.CharField(max_length=100)
+    description = models.CharField(max_length=500)
 
     class Meta:
         db_table = "category"
@@ -129,39 +169,38 @@ class Category(models.Model):
         return f"{self.category_id} - {self.name}"
 
 # Book model
-class Book(models.Model):
+class Book(TimeStampedModel):
     book_id = models.AutoField(primary_key=True)
-    title = models.CharField(max_length=200, null=False, blank=False)
-    isbn = models.CharField(unique=True, max_length=20, null=True, blank=True)
-    publication_date = models.DateTimeField(auto_now_add=True)
-    total_copies = models.IntegerField(null=False, blank=False)
-    available_copies = models.IntegerField(null=False, blank=False)
+    title = models.CharField(max_length=200)
+    isbn = models.CharField(unique=True, max_length=13)
+    publication_date = models.DateField()
+    total_copies = models.PositiveIntegerField()
+    available_copies = models.PositiveIntegerField()
 
     # Relationship
-    library = models.ForeignKey(Library, on_delete=models.CASCADE, db_index=True)
-    authors = models.ManyToManyField(Author, related_name='books')
-    categories = models.ManyToManyField(Category, related_name='books')
+    authors = models.ManyToManyField('Author', related_name='books', through="BookAuthor")
+    categories = models.ManyToManyField('Category', related_name='books', through="BookCategory")
 
     class Meta:
         db_table = "book"
         verbose_name = "Book Details"
         verbose_name_plural = "Books Details"
-        ordering = ['title'] #ASC order
+        ordering = ['created_at'] #ASC order
 
     def __str__(self):
         return f"{self.book_id} - {self.title}"
 
 # Book Borrowing model
-class Borrowing(models.Model):
+class Borrowing(TimeStampedModel):
     borrowing_id = models.AutoField(primary_key=True)
-    borrow_date = models.DateTimeField(auto_now_add=True, null=False, blank=False)
+    borrow_date = models.DateTimeField(auto_now_add=True)
     due_date = models.DateField(default=default_due_date) # After 14 days from borrow_date
     return_date = models.DateTimeField(null=True, blank=True) # Fill when he/she will return
-    late_fee = models.FloatField(null=True, blank=True)
+    late_fee = models.FloatField(default=0.0)
 
     #Relationship
-    member = models.ForeignKey(Member, on_delete=models.CASCADE, db_index=True)
-    book = models.ForeignKey(Book, on_delete=models.CASCADE, db_index=True)
+    member = models.ForeignKey('Member', on_delete=models.CASCADE)
+    book = models.ForeignKey('Book', on_delete=models.CASCADE)
 
     class Meta:
         db_table = "borrowing"
@@ -173,19 +212,15 @@ class Borrowing(models.Model):
         return  f"{self.borrowing_id} - {self.member.member_id}: {self.member.first_name} {self.member.last_name}"
 
 # Book review model
-class Review(models.Model):
+class Review(TimeStampedModel):
     review_id = models.AutoField(primary_key=True)
-    rating = models.FloatField(
-        validators=[MinValueValidator(1.0), MaxValueValidator(5.0)],
-        null=False,
-        blank=False
-    )
-    comment = models.CharField(max_length=500, null=True, blank=True)
+    rating = models.FloatField(validators=[MinValueValidator(1.0), MaxValueValidator(5.0)])
+    comment = models.CharField(max_length=500)
     review_date = models.DateTimeField(auto_now=True) # updated when edited
 
     # Relationship
-    member = models.ForeignKey(Member, on_delete=models.CASCADE, db_index=True)
-    book = models.ForeignKey(Book, on_delete=models.CASCADE, db_index=True)
+    member = models.ForeignKey('Member', on_delete=models.CASCADE)
+    book = models.ForeignKey('Book', on_delete=models.CASCADE)
 
     class Meta:
         db_table = "review"
