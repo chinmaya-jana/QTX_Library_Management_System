@@ -31,17 +31,13 @@ def validate_phone_number(value):
     except phonenumbers.NumberParseException as e:
         raise serializers.ValidationError(f"Invalid phone number format: {e}")
 
-# this is only for created_at and updated_at for each record
-class TimestampMixin(serializers.ModelSerializer):
-    created_at = serializers.DateTimeField(read_only=True)
-    updated_at = serializers.DateTimeField(read_only=True)
-
 # Address Serializer
-class AddressSerializer(TimestampMixin):
+class AddressSerializer(serializers.ModelSerializer):
     class Meta:
         model = Address
         fields = ['street', 'district', 'state', 'pin',
-                  'country', 'created_at', 'updated_at']
+                  'country']
+        read_only_fields = fields
 
     def validate_street(self, value):
         if not value.strip():
@@ -69,12 +65,13 @@ class AddressSerializer(TimestampMixin):
         return value.strip()
 
 # Contact number Serializer
-class ContactNumberSerializer(TimestampMixin):
+class ContactNumberSerializer(serializers.ModelSerializer):
     number = serializers.CharField(validators=[validate_phone_number])
 
     class Meta:
         model = ContactNumber
-        fields = ['number', 'type', 'created_at', 'updated_at']
+        fields = ['number', 'type']
+        read_only_fields = fields
 
     def validate_type(self, value):
         if value not in ContactType.values:
@@ -96,8 +93,10 @@ class BookMiniSerializer(serializers.ModelSerializer):
         return [c.name for c in obj.categories.all()]
 
 
-class LibrarySerializer(TimestampMixin):
+class LibrarySerializer(serializers.ModelSerializer):
     library_id = serializers.IntegerField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
     campus_location = AddressSerializer(required=False, allow_null=True)
     phone_number = ContactNumberSerializer(required=False, allow_null=True)
     books = serializers.SerializerMethodField()
@@ -207,9 +206,11 @@ class LibrarySerializer(TimestampMixin):
             return {"message": "No books available in this library."}
         return BookMiniSerializer(books, many=True).data
 
-class AuthorSerializer(TimestampMixin):
+class AuthorSerializer(serializers.ModelSerializer):
     author_id = serializers.IntegerField(read_only=True)
     books = serializers.SerializerMethodField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Author
@@ -270,8 +271,10 @@ class AuthorSerializer(TimestampMixin):
         ]
 
 # Member Serializer
-class MemberSerializer(TimestampMixin):
+class MemberSerializer(serializers.ModelSerializer):
     phone = ContactNumberSerializer()
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Member
@@ -369,6 +372,8 @@ class BookTitleAuthorSerializer(serializers.ModelSerializer):
 class CategorySerializer(serializers.ModelSerializer):
     category_id = serializers.IntegerField(read_only=True)
     books = BookTitleAuthorSerializer(many=True, read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Category
@@ -396,11 +401,13 @@ class CategorySerializer(serializers.ModelSerializer):
         return instance
 
 # Book Serializer
-class BookSerializer(TimestampMixin):
+class BookSerializer(serializers.ModelSerializer):
     book_id = serializers.IntegerField(read_only=True)
     library = serializers.DictField(write_only=True)
     authors = serializers.ListField(child=serializers.DictField(), write_only=True)
     categories = serializers.ListField(child=serializers.DictField(), write_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Book
@@ -532,10 +539,12 @@ class BookSerializer(TimestampMixin):
         instance.delete()
 
 # Borrowing Serializer
-class BorrowingSerializer(TimestampMixin):
+class BorrowingSerializer(serializers.ModelSerializer):
     borrowing_id = serializers.IntegerField(read_only=True)
     member = serializers.PrimaryKeyRelatedField(queryset=Member.objects.all())
     book = serializers.PrimaryKeyRelatedField(queryset=Book.objects.all())
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Borrowing
@@ -615,10 +624,12 @@ class BorrowingSerializer(TimestampMixin):
 
 
 # Review Serializer
-class ReviewSerializer(TimestampMixin):
+class ReviewSerializer(serializers.ModelSerializer):
     review_id = serializers.IntegerField(read_only=True)
     member = serializers.PrimaryKeyRelatedField(queryset=Member.objects.all())
     book = serializers.PrimaryKeyRelatedField(queryset=Book.objects.all())
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Review
