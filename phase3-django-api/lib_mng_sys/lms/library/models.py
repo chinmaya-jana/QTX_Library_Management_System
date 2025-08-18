@@ -1,8 +1,10 @@
+from decimal import Decimal
+
+from django.db import models
 from datetime import timedelta
 
 from django.core.validators import MinValueValidator, MaxValueValidator
-from django.db import models
-from django.db.models import UniqueConstraint
+from django.db.models import UniqueConstraint, CASCADE
 from django.utils import timezone
 from phonenumber_field.modelfields import PhoneNumberField
 
@@ -10,67 +12,18 @@ from phonenumber_field.modelfields import PhoneNumberField
 def default_due_date():
     return timezone.now().date() + timedelta(days=14)
 
-# Enum for member types
 class MemberType(models.TextChoices):
-    # 1st 'Student' is the actual value stored in the DB
-    # 2nd 'Student' is the human-readable name shown in forms
-    STUDENT = "student", "Student"
-    FACULTY = "faculty", "Faculty"
+    STUDENT = 'student', 'Student'
+    FACULTY = 'faculty', 'Faculty'
 
-# Enum for contact number types
-class ContactType(models.TextChoices):
+class PhoneType(models.TextChoices):
     MOBILE = 'mobile', 'Mobile'
     WORK = 'work', 'Work'
     HOME = 'home', 'Home'
 
-# Address model
-class Address(models.Model):
-    street = models.CharField(max_length=100)
-    district = models.CharField(max_length=50)
-    state = models.CharField(max_length=50)
-    pin = models.CharField(max_length=10)
-    country = models.CharField(max_length=50, default='India')
-
-    class Meta:
-        db_table = 'Address'  #custom table name in db
-        verbose_name = "Address"
-        verbose_name_plural = "Addresses"
-        constraints = [
-            models.UniqueConstraint(
-                fields=['street', 'district', 'state', 'pin', 'country'],
-                name='unique_address'
-            )
-        ]  # prevent duplicate addresses
-
-    def __str__(self):
-        return f"{self.street}, {self.district}, {self.state}, {self.pin}, {self.country}"
-
-# Contact number model
-class ContactNumber(models.Model):
-    number = PhoneNumberField(unique=True) #unique contact number
-    type = models.CharField(max_length=20, choices=ContactType.choices)
-
-    class Meta:
-        db_table = "contact"
-        verbose_name = "Contact Detail"
-        verbose_name_plural = "Contact Details"
-    def __str__(self):
-        return f"{self.number} ({self.type})"
-
-class BookLibrary(models.Model):
-    book = models.ForeignKey("Book", on_delete=models.CASCADE)
-    library = models.ForeignKey("Library", on_delete=models.CASCADE)
-
-    class Meta:
-        db_table = "book_library"
-        verbose_name = "Book Library"
-        verbose_name_plural = "Book Libraries"
-        constraints = [
-            UniqueConstraint(fields=['book', 'library'], name='unique_book_library')
-        ]
-
-    def __str__(self):
-        return f"{self.book} - {self.library}"
+class BorrowingStatus(models.TextChoices):
+    HOLD = 'hold', 'Hold'          # Active borrow (book in hand)
+    RETURNED = 'returned', 'Returned'  # Returned book
 
 class BookAuthor(models.Model):
     book = models.ForeignKey("Book", on_delete=models.CASCADE)
@@ -78,13 +31,17 @@ class BookAuthor(models.Model):
 
     class Meta:
         db_table = "book_author"
-        verbose_name = "Book Authors"
+        verbose_name = "Book Author"
+        verbose_name_plural = "Book Authors"
         constraints = [
             UniqueConstraint(fields=['book', 'author'], name='unique_book_author')
         ]
 
     def __str__(self):
-        return f"{self.book} - {self.author}"
+        # Safely show book title and author name
+        book_title = self.book.title if self.book else f"BookID:{self.book_id}"
+        author_name = f"{self.author.first_name} {self.author.last_name}" if self.author else f"AuthorID:{self.author_id}"
+        return f"{book_title} - {author_name}"
 
 class BookCategory(models.Model):
     book = models.ForeignKey("Book", on_delete=models.CASCADE)
@@ -98,24 +55,20 @@ class BookCategory(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.book} - {self.category}"
+        book_title = self.book.title if self.book else f"BookID:{self.book_id}"
+        category_name = self.category.name if self.category else f"CategoryID:{self.category_id}"
+        return f"{book_title} - {category_name}"
 
 # Library model
 class Library(models.Model):
     library_id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=255, unique=True) # Must be unique
-    campus_location = models.ForeignKey(Address, on_delete=models.PROTECT)
+    campus_location = models.TextField(max_length=250)
     contact_email = models.EmailField(unique=True, max_length=100)
-    phone_number = models.OneToOneField(ContactNumber, on_delete=models.PROTECT)
+    phone_number = PhoneNumberField(unique=True)
+    phone_type = models.CharField(max_length=10, choices=PhoneType.choices)
     created_at = models.DateTimeField(auto_now_add=True)  # on create
     updated_at = models.DateTimeField(auto_now=True)  # on every save
-
-    # relationship
-    books = models.ManyToManyField(
-        'Book',
-        through='BookLibrary',
-        related_name='library_set'  # <-- added to avoid clash
-    )
 
     class Meta:
         db_table = "libraries"
@@ -131,9 +84,9 @@ class Author(models.Model):
     author_id = models.AutoField(primary_key=True)
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
-    birth_date = models.DateField()
+    birth_date = models.DateField(null=True, blank=True)
     nationality = models.CharField(max_length=20, default='Indian')
-    biography = models.TextField(max_length=200)
+    biography = models.TextField(max_length=250)
     created_at = models.DateTimeField(auto_now_add=True)  # on create
     updated_at = models.DateTimeField(auto_now=True)  # on every save
 
@@ -143,21 +96,22 @@ class Author(models.Model):
         verbose_name = "Book Author"
         verbose_name_plural = "Book Authors"
         constraints = [
-            UniqueConstraint(fields=['first_name', 'last_name', 'birth_date'], name='unique_name')
+            UniqueConstraint(fields=['first_name', 'last_name'], name='unique_name')
         ]
 
     def __str__(self):
         return f"{self.author_id} - {self.first_name} {self.last_name}"
+
 # Member model
 class Member(models.Model):
     member_id = models.AutoField(primary_key=True)
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     email = models.EmailField(unique=True, max_length=100)
-    phone = models.OneToOneField(ContactNumber, on_delete=models.CASCADE, unique=True)
+    phone = PhoneNumberField(unique=True)
+    phone_type = models.CharField(max_length=10, choices=PhoneType.choices)
     member_type = models.CharField(max_length=20, choices=MemberType.choices)
     registration_date = models.DateTimeField(auto_now_add=True)
-    created_at = models.DateTimeField(auto_now_add=True)  # on create
     updated_at = models.DateTimeField(auto_now=True)  # on every save
 
     class Meta:
@@ -189,21 +143,18 @@ class Category(models.Model):
 # Book model
 class Book(models.Model):
     book_id = models.AutoField(primary_key=True)
-    title = models.CharField(max_length=200)
+    title = models.CharField(max_length=200, unique=True)
     isbn = models.CharField(unique=True, max_length=13)
     publication_date = models.DateField()
-    total_copies = models.PositiveIntegerField()
-    available_copies = models.PositiveIntegerField()
+    total_copies = models.PositiveIntegerField(default=0)
+    available_copies = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)  # on create
     updated_at = models.DateTimeField(auto_now=True)  # on every save
 
-    # Relationship
+    # one-to-many relationship
+    library = models.ForeignKey(Library, on_delete=CASCADE)
+    # many-to-many relationship
     authors = models.ManyToManyField(Author, related_name='books', through="BookAuthor")
-    libraries = models.ManyToManyField(
-        'Library',
-        through='BookLibrary',
-        related_name='book_set'  # <-- added to avoid clash
-    )
     categories = models.ManyToManyField(Category, related_name='books', through="BookCategory")
 
     class Meta:
@@ -219,40 +170,42 @@ class Book(models.Model):
 class Borrowing(models.Model):
     borrowing_id = models.AutoField(primary_key=True)
     borrow_date = models.DateTimeField(auto_now_add=True)
-    due_date = models.DateTimeField(default=default_due_date) # After 14 days from borrow_date
+    due_date = models.DateField(default=default_due_date) # After 14 days from borrow_date
     return_date = models.DateTimeField(null=True, blank=True) # Fill when he/she will return
     late_fee = models.FloatField(default=0.0)
-    created_at = models.DateTimeField(auto_now_add=True)  # on create
+    status = models.CharField(
+        max_length=10,
+        choices=BorrowingStatus.choices,
+        default=BorrowingStatus.HOLD
+    )
     updated_at = models.DateTimeField(auto_now=True)  # on every save
 
-    #Relationship
-    member = models.ForeignKey('Member', on_delete=models.CASCADE)
-    book = models.ForeignKey('Book', on_delete=models.CASCADE)
+    #one-to-many relationship
+    member = models.ForeignKey(Member, on_delete=models.CASCADE)
+    book = models.ForeignKey(Book, on_delete=models.CASCADE)
 
     class Meta:
         db_table = "borrowing"
         ordering = ['due_date']
         verbose_name = "Borrowed Book"
         verbose_name_plural = "Borrowed Books"
-        constraints = [
-            UniqueConstraint(fields=['member', 'book'], name='unique_book_member')
-        ]
 
     def __str__(self):
-        return  f"{self.borrowing_id} - {self.member.member_id}: {self.member.first_name} {self.member.last_name}"
+        return f"{self.borrowing_id} - {self.member} - {self.status}"
 
 # Book review model
 class Review(models.Model):
     review_id = models.AutoField(primary_key=True)
-    rating = models.FloatField(validators=[MinValueValidator(1.0), MaxValueValidator(5.0)])
-    comment = models.CharField(max_length=500)
+    rating = models.DecimalField(
+        max_digits=2, decimal_places=1,
+        validators=[MinValueValidator(Decimal('1.0')), MaxValueValidator(Decimal('5.0'))])
+    comment = models.TextField(max_length=500)
     review_date = models.DateTimeField(auto_now=True) # updated when edited
     created_at = models.DateTimeField(auto_now_add=True)  # on create
-    updated_at = models.DateTimeField(auto_now=True)  # on every save
 
-    # Relationship
-    member = models.ForeignKey('Member', on_delete=models.CASCADE)
-    book = models.ForeignKey('Book', on_delete=models.CASCADE)
+    # one-to-many relationship
+    member = models.ForeignKey(Member, on_delete=models.CASCADE)
+    book = models.ForeignKey(Book, on_delete=models.CASCADE)
 
     class Meta:
         db_table = "review"
@@ -264,4 +217,4 @@ class Review(models.Model):
         ordering = ['-review_date'] #DESC order
 
     def __str__(self):
-        return f"{self.review_id} - {self.member.member_id}: {self.rating}"
+        return f"{self.review_id} - {self.member}: {self.rating}"
