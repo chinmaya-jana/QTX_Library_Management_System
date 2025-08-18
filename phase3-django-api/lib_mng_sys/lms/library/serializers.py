@@ -91,9 +91,14 @@ class AuthorWriteSerializer(serializers.ModelSerializer):
         return value.replace("-","").replace(" ", "").strip().capitalize()
 
 class AuthorReadSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+
     class Meta:
         model = Author
-        fields = "__all__"
+        fields = ['author_id', 'first_name', 'last_name', 'full_name', 'birth_date', 'nationality', 'biography']
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip()
 
 # -----------------------------Member-----------------------------------
 class MemberWriteSerializer(serializers.ModelSerializer):
@@ -133,9 +138,14 @@ class MemberWriteSerializer(serializers.ModelSerializer):
         return value
 
 class MemberReadSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+
     class Meta:
         model = Member
         fields = "__all__"
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip()
 
 # ----------------- Category -----------------
 class CategoryWriteSerializer(serializers.ModelSerializer):
