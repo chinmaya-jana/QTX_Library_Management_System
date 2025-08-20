@@ -3,8 +3,8 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (ReviewViewSet, LibraryViewSet, AuthorViewSet,
                     MemberViewSet, CategoryViewSet, BookViewSet, BorrowingViewSet,
-                    BookAuthorViewSet, BookCategoryViewSet, LibraryBookViewSet, BookSearchViewSet,
-                    MemberBorrowingHistoryViewSet, BookAvailabilityViewSet, BookBorrowViewSet, BookReturnView,
+                    BookAuthorViewSet, BookCategoryViewSet, LibraryBookViewSet,
+                    MemberBorrowingHistoryViewSet, BookAvailabilityViewSet,
                     LibraryStatisticsViewSet)
 
 router = DefaultRouter()
@@ -20,10 +20,8 @@ router.register(r'reviews', ReviewViewSet)
 
 # Custom mapping for LibraryBookViewSet
 library_books = LibraryBookViewSet.as_view({"get": "retrieve"})
-book_search = BookSearchViewSet.as_view({"get": "list"})
 member_borrowings = MemberBorrowingHistoryViewSet.as_view({"get": "list"})
 book_availability = BookAvailabilityViewSet.as_view({"get": "retrieve"})
-book_borrow = BookBorrowViewSet.as_view({"post": "create"})
 library_statistics = LibraryStatisticsViewSet.as_view({"get": "retrieve"})
 
 urlpatterns = [
@@ -34,20 +32,11 @@ urlpatterns = [
     # Example: GET http://localhost:8000/api/libraries/3/books/
     path('libraries/<int:pk>/books/', library_books, name="library-books"),
 
-    # Book Search (title, author, category)
-    path('books/search/', book_search, name="book-search"),
-
     # Member borrowing history
     path('members/<int:pk>/borrowings/', member_borrowings, name="member-borrowings"),
 
     # Book availability
     path('books/<int:pk>/availability/', book_availability, name="book-availability"),
-
-    # Borrow a book
-    path('books/borrow/', book_borrow, name="book-borrow"),
-
-    # Return a book
-    path('books/return/', BookReturnView.as_view(), name="book-return"),
 
     # Library statistics
     path('libraries/<int:pk>/statistics/', library_statistics, name="library-statistics"),

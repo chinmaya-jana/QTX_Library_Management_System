@@ -38,10 +38,7 @@ class BookAuthor(models.Model):
         ]
 
     def __str__(self):
-        # Safely show book title and author name
-        book_title = self.book.title if self.book else f"BookID:{self.book_id}"
-        author_name = f"{self.author.first_name} {self.author.last_name}" if self.author else f"AuthorID:{self.author_id}"
-        return f"{book_title} - {author_name}"
+        return f"{self.book} - {self.author}"
 
 class BookCategory(models.Model):
     book = models.ForeignKey("Book", on_delete=models.CASCADE)
@@ -55,9 +52,7 @@ class BookCategory(models.Model):
         ]
 
     def __str__(self):
-        book_title = self.book.title if self.book else f"BookID:{self.book_id}"
-        category_name = self.category.name if self.category else f"CategoryID:{self.category_id}"
-        return f"{book_title} - {category_name}"
+        return f"{self.book} - {self.category}"
 
 # Library model
 class Library(models.Model):
@@ -99,6 +94,10 @@ class Author(models.Model):
             UniqueConstraint(fields=['first_name', 'last_name'], name='unique_name')
         ]
 
+    @property
+    def full_name(self):
+        return f"{self.first_name} {self.last_name}"
+
     def __str__(self):
         return f"{self.author_id} - {self.first_name} {self.last_name}"
 
@@ -119,6 +118,10 @@ class Member(models.Model):
         ordering = ['registration_date'] #ASC order
         verbose_name = "Member detail" #Book categories
         verbose_name_plural = "Member details"
+
+    @property
+    def full_name(self):
+        return f"{self.first_name} {self.last_name}"
 
     def __str__(self):
         return f"{self.member_id} - ({self.first_name} {self.last_name}) - {self.member_type}"
@@ -163,6 +166,22 @@ class Book(models.Model):
         verbose_name_plural = "Books Details"
         ordering = ['created_at'] #ASC order
 
+    @property
+    def borrowed_books(self):
+        return self.total_copies - self.available_copies
+
+    @property
+    def library_name(self):
+        return f"{self.library.name}"
+
+    @property
+    def author_name(self):
+        return ", ".join([author.full_name for author in self.authors.all()])
+
+    @property
+    def category_name(self):
+        return ", ".join([category.name for category in self.categories.all()])
+
     def __str__(self):
         return f"{self.book_id} - {self.title}"
 
@@ -190,8 +209,17 @@ class Borrowing(models.Model):
         verbose_name = "Borrowed Book"
         verbose_name_plural = "Borrowed Books"
 
+
+    @property
+    def member_name(self):
+        return f"{self.member.full_name}"
+
+    @property
+    def book_title(self):
+        return f"{self.book.title}"
+
     def __str__(self):
-        return f"{self.borrowing_id} - {self.member} - {self.status}"
+        return f"{self.borrowing_id} - {self.member.full_name} - {self.status}"
 
 # Book review model
 class Review(models.Model):
@@ -217,4 +245,4 @@ class Review(models.Model):
         ordering = ['-review_date'] #DESC order
 
     def __str__(self):
-        return f"{self.review_id} - {self.member}: {self.rating}"
+        return f"{self.review_id} - {self.member.full_name}: {self.rating}"

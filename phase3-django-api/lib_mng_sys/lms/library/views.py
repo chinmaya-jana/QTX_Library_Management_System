@@ -1,3 +1,5 @@
+from http.client import responses
+
 from django.db.models import Case, When, IntegerField, Value, Q, CharField
 from django.db.models.functions import Concat
 from django.shortcuts import render
@@ -35,40 +37,56 @@ class BookCategoryViewSet(viewsets.ModelViewSet):
 class LibraryViewSet(viewsets.ModelViewSet):
     queryset = Library.objects.all()
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
-    filterset_fields = ["name", "campus_location", "phone_type"]  # Example filters
-    search_fields = ["name", "campus_location", "contact_email"]
-    ordering_fields = ["name", "campus_location", "created_at"]
-    ordering = ["name"]
+    filterset_fields = ["name", "campus_location", "contact_email", "phone_number", "phone_type"]
+    search_fields = ["name", "campus_location", "phone_type"]
+    ordering_fields = ["name", "created_at", "updated_at", "library_id", "updated_at"]
+    ordering = ["library_id"]
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
             return LibraryWriteSerializer
         return LibraryReadSerializer
 
-    def perform_create(self, serializer):
-        serializer.save(
-            name=serializer.validated_data["name"].strip(),
-            campus_location=serializer.validated_data["campus_location"].strip(),
-            contact_email=serializer.validated_data["contact_email"].lower()
+    def create(self, request, *args, **kwargs):
+        """
+        # While POST: libray_id is not returned
+        response = super().create(request, *args, **kwargs)
+        response.data = {
+            "message": "Library added successfully.",
+            "data": response.data
+        }
+        return response
+        """
+        # library_id is returned properly
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        instance = serializer.instance  # <- saved Library instance
+        read_serializer = LibraryReadSerializer(instance)
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            {
+                "message": "Library added successfully.",
+                "data": read_serializer.data
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers
         )
 
-    def perform_update(self, serializer):
-        validated = {
-            field: (value.strip() if isinstance(value, str) else value)
-            for field, value in serializer.validated_data.items()
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        instance = self.get_object()
+        read_serializer = LibraryReadSerializer(instance)
+        response.data = {
+            "message": "Library updated successfully.",
+            "data": read_serializer.data
         }
-        serializer.save(**validated)
+        return response
 
     def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        books = Book.objects.filter(library=instance)
-        for book in books:
-            Borrowing.objects.filter(book=book).delete()
-            Review.objects.filter(book=book).delete()
-            book.delete()
-        instance.delete()
+        super().destroy(request, *args, **kwargs)
         return Response(
-            {"message": "Library and all related records deleted successfully."},
+            {"message": "Library deleted successfully."},
             status=status.HTTP_204_NO_CONTENT
         )
 
@@ -77,144 +95,160 @@ class AuthorViewSet(viewsets.ModelViewSet):
     queryset = Author.objects.all()
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ["birth_date", "first_name", "last_name", "nationality"]
-    search_fields = ["first_name", "last_name", "full_name"]
-    ordering_fields = ["first_name", "last_name", "birth_date", "created_at"]
-    ordering = ["first_name"]
+    search_fields = ["first_name", "last_name", "full_name_db"]
+    ordering_fields = ["full_name_db", "birth_date", "created_at", "author_id", "updated_at"]
+    ordering = ["author_id"]
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        # Annotate a full_name field
-        qs = qs.annotate(full_name=Concat(
-            'first_name', Value(' '), 'last_name',
-            output_field=CharField()
-        ))
-        return qs
+        # Annotate DB-level field for filtering/searching/ordering
+        return super().get_queryset().annotate(
+            full_name_db=Concat(
+                'first_name', Value(' '), 'last_name',
+                output_field=CharField()
+            )
+        )
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
             return AuthorWriteSerializer
         return AuthorReadSerializer
 
-    def perform_create(self, serializer):
-        # Strip extra spaces and save clean data
-        first = serializer.validated_data.get("first_name", "").strip()
-        last = serializer.validated_data.get("last_name", "").strip()
-        self.instance = serializer.save(first_name=first, last_name=last)
-
-    def perform_update(self, serializer):
-        validated = {
-            field: (value.strip() if isinstance(value, str) else value)
-            for field, value in serializer.validated_data.items()
-        }
-        self.instance = serializer.save(**validated)
-
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        # Explicitly delete BookAuthor links before deleting author
-        BookAuthor.objects.filter(author=instance).delete()
-        instance.delete()
-        return Response(
-            {"message": "Author and related BookAuthor records deleted successfully."},
-            status=status.HTTP_204_NO_CONTENT
-        )
-
     def create(self, request, *args, **kwargs):
-        super().create(request, *args, **kwargs)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        instance = serializer.instance  # to save author instance
+        read_serializer = AuthorReadSerializer(instance)
+        headers = self.get_success_headers(serializer.data)
         return Response(
             {
                 "message": "Author added successfully.",
-                "data": AuthorReadSerializer(self.instance, context={"request": request}).data
+                "data": read_serializer.data
             },
-            status=status.HTTP_201_CREATED
+            status=status.HTTP_201_CREATED,
+            headers=headers
         )
 
     def update(self, request, *args, **kwargs):
-        super().update(request, *args, **kwargs)
+        response = super().update(request, *args, **kwargs)
+        instance = self.get_object()
+        read_serializer = AuthorReadSerializer(instance)
+        response.data = {
+            "message": "Author updated successfully.",
+            "data": read_serializer.data
+        }
+        return response
+
+    def destroy(self, request, *args, **kwargs):
+        super().destroy(request, *args, **kwargs)
         return Response(
-            {
-                "message": "Author updated successfully.",
-                "data": AuthorReadSerializer(self.instance, context={"request": request}).data
-            },
-            status=status.HTTP_200_OK
+            {"message": "Author deleted successfully."},
+            status=status.HTTP_204_NO_CONTENT
         )
 
 #----------------------------------Category-----------------------------------------
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["name"]  # exact filtering
-    search_fields = ["name"]     # partial search
-    ordering_fields = ["name", "category_id"]  # sorting
-    ordering = ["category_id"]            # default ordering
+    filterset_fields = ["name"]
+    search_fields = ["name"]
+    ordering_fields = ["name", "category_id", "created_at"]
+    ordering = ["category_id"]
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
             return CategoryWriteSerializer
         return CategoryReadSerializer
 
+    # Custom message
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        instance = serializer.instance
+        read_serializer = CategoryReadSerializer(instance)
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            {
+                "message": "Author added successfully.",
+                "data": read_serializer.data
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
+
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        instance = self.get_object()
+        read_serializer = CategoryReadSerializer(instance)
+        response.data = {
+            "message": "Author updated successfully.",
+            "data": read_serializer.data
+        }
+        return response
+
+    def destroy(self, request, *args, **kwargs):
+        super().destroy(request, *args, **kwargs)
+        return Response(
+            {"message": "Category deleted successfully."},
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 #-------------------------------Book--------------------------------------------------
 class BookViewSet(viewsets.ModelViewSet):
     queryset = Book.objects.all()
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["title", "isbn", "library"]
+    search_fields = ["title", "isbn", "library"]
+    ordering_fields = ["book_id", "publication_date", "created_at", "updated_at", "title", "total_copies", "available_copies",]
+    ordering = ["book_id"]
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
             return BookWriteSerializer
         return BookReadSerializer
 
-    # Filtering, Searching, Ordering
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["title", "isbn", "library"]
-    search_fields = ["title", "isbn"]
-    ordering_fields = ["publication_date", "title", "total_copies", "available_copies"]
-    ordering = ["title"]
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        instance = serializer.instance
+        read_serializer = BookReadSerializer(instance)
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            {
+                "message": "Book added successfully.",
+                "data": read_serializer.data
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
 
-    def perform_create(self, serializer):
-        total_copies = serializer.validated_data["total_copies"]
-        serializer.save(available_copies=total_copies)
-
-    def perform_update(self, serializer):
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
         instance = self.get_object()
-        new_total = serializer.validated_data.get("total_copies")
+        read_serializer = BookReadSerializer(instance)
+        response.data = {
+            "message": "Author updated successfully.",
+            "data": read_serializer.data
+        }
+        return response
 
-        if new_total and new_total != instance.total_copies:
-            diff = new_total - instance.total_copies
-            if diff > 0:
-                instance.total_copies += diff
-                instance.available_copies += diff
-            else:
-                # Prevent reducing total below available
-                if instance.available_copies > new_total:
-                    raise NotFound("Cannot reduce total copies below available copies.")
-                instance.total_copies = new_total
-
-        # Save other fields
-        for field, value in serializer.validated_data.items():
-            if field not in ["total_copies"]:
-                setattr(instance, field, value)
-
-        instance.save()
-
-    def perform_destroy(self, instance):
-        #Delete related borrowings & reviews before deleting a book.
-        Borrowing.objects.filter(book=instance).delete()
-        Review.objects.filter(book=instance).delete()
-        instance.delete()
+    def destroy(self, request, *args, **kwargs):
+        super().destroy(request, *args, **kwargs)
+        return Response(
+            {"message": "Book deleted successfully."},
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 #----------------------------Member-------------------------------------------
 class MemberViewSet(viewsets.ModelViewSet):
     queryset = Member.objects.all()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-
-    # Filtering
-    filterset_fields = ["member_type", "phone_type"]
-
-    # Searching (custom full_name + normal fields)
-    search_fields = ["first_name", "last_name", "email", "phone"]
-
-    # Ordering
-    ordering_fields = ["first_name", "last_name", "email", "created_at"]
-    ordering = ["first_name"]
+    filterset_fields = ["member_type", "phone_type", "registration_date"]
+    search_fields = ["first_name", "last_name", "email", "phone", "full_name_db"]
+    ordering_fields = ["full_name_db", "created_at", "member_id"]
+    ordering = ["member_id"]
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
@@ -222,26 +256,52 @@ class MemberViewSet(viewsets.ModelViewSet):
         return MemberReadSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-
-        # Allow searching by `full_name`
-        full_name_query = self.request.query_params.get("search")
-        if full_name_query:
-            queryset = queryset.filter(
-                Q(first_name__icontains=full_name_query) | Q(last_name__icontains=full_name_query)
+        return super().get_queryset().annotate(
+            full_name_db=Concat(
+                'first_name', Value(' '), 'last_name',
+                output_field=CharField()
             )
-        return queryset
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        instance = serializer.instance
+        read_serializer = MemberReadSerializer(instance)
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            {
+                "message": "Member added successfully.",
+                "data": read_serializer.data
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
+
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        instance = self.get_object()
+        read_serializer = MemberReadSerializer(instance)
+        response.data = {
+            "message": "Member updated successfully.",
+            "data": read_serializer.data
+        }
+        return response
+
+    def destroy(self, request, *args, **kwargs):
+        super().destroy(request, *args, **kwargs)
+        return Response(
+            {"message": "Member deleted successfully."},
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 #----------------------------Borrowing----------------------------------------
 class BorrowingViewSet(viewsets.ModelViewSet):
     queryset = Borrowing.objects.all()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-
-    # Filtering (by member, book, status)
     filterset_fields = ["member", "book", "status"]
-    # Searching (member/book string repr)
     search_fields = ["member__first_name", "member__last_name", "book__title"]
-    # Sorting
     ordering_fields = ["due_date", "borrow_date", "return_date", "late_fee"]
 
     def get_queryset(self):
@@ -408,7 +468,7 @@ class LibraryBookViewSet(viewsets.ViewSet):
 
         return Response(data, status=status.HTTP_200_OK)
 
-# i. /api/books/search/
+# /api/books/search/
 class BookSearchViewSet(viewsets.ViewSet):
     """
     Search books by title, author, or category.
@@ -430,7 +490,7 @@ class BookSearchViewSet(viewsets.ViewSet):
         return Response({"results": list(results)}, status=status.HTTP_200_OK)
 
 
-# ii. /api/members/{member_id}/borrowings/
+# /api/members/{member_id}/borrowings/
 class MemberBorrowingHistoryViewSet(viewsets.ViewSet):
     """
     Get borrowing history of a member.
@@ -456,7 +516,7 @@ class MemberBorrowingHistoryViewSet(viewsets.ViewSet):
         return Response({"member_id": member.member_id, "borrowings": data}, status=status.HTTP_200_OK)
 
 
-# iii. /api/books/{book_id}/availability/
+# /api/books/{book_id}/availability/
 class BookAvailabilityViewSet(viewsets.ViewSet):
     """
     Check availability of a book.
@@ -478,111 +538,7 @@ class BookAvailabilityViewSet(viewsets.ViewSet):
         }
         return Response(data, status=status.HTTP_200_OK)
 
-
-# iv. /api/books/borrow/
-class BookBorrowViewSet(viewsets.ViewSet):
-    """
-    Borrow a book.
-    Rules:
-    - Member must exist
-    - Book must exist and be available
-    - Member must not exceed borrow limit
-    - Member must not already hold the same book
-    """
-    def create(self, request):
-        member_id = request.data.get("member_id")
-        book_id = request.data.get("book_id")
-
-        try:
-            member = Member.objects.get(pk=member_id)
-        except Member.DoesNotExist:
-            raise NotFound("Member not found.")
-
-        try:
-            book = Book.objects.get(pk=book_id)
-        except Book.DoesNotExist:
-            raise NotFound("Book not found.")
-
-        # Already holding the same book?
-        if Borrowing.objects.filter(member=member, book=book, status="BORROWED").exists():
-            raise ValidationError("Member already borrowed this book.")
-
-        # Borrow limit (example: 5 books)
-        if Borrowing.objects.filter(member=member, status="BORROWED").count() >= 5:
-            raise ValidationError("Member has reached the borrow limit (5 books).")
-
-        if book.available_copies <= 0:
-            raise ValidationError("Book is not available.")
-
-        borrowing = Borrowing.objects.create(member=member, book=book, status="BORROWED")
-        book.available_copies -= 1
-        book.save()
-
-        return Response(
-            {"message": "Book borrowed successfully.", "borrowing_id": borrowing.borrowing_id},
-            status=status.HTTP_201_CREATED,
-        )
-
-
-# v. /api/books/return/
-class BookReturnView(APIView):
-    """
-    Return a borrowed book by member_id and book_id.
-    URL: /api/books/return/
-    """
-    def put(self, request):
-        member_id = request.data.get("member_id")
-        book_id = request.data.get("book_id")
-
-        if not member_id or not book_id:
-            return Response(
-                {"error": "member_id and book_id are required."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Find borrowings on HOLD for this member and book
-        borrowings = Borrowing.objects.filter(
-            member_id=member_id,
-            book_id=book_id,
-            status='hold'
-        )
-
-        if not borrowings.exists():
-            return Response(
-                {"error": "No book on hold found for this member and book."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        returned_books = []
-
-        # Use existing BorrowingViewSet to perform the return
-        factory = APIRequestFactory()
-        view = BorrowingViewSet.as_view({'put': 'update'})
-
-        for borrowing in borrowings:
-            # Prepare request for BorrowingViewSet.update
-            request_for_borrowing = factory.put(
-                f"/borrowings/{borrowing.borrowing_id}/",
-                {"status": "returned"},
-                format='json'
-            )
-
-            response = view(request_for_borrowing, pk=borrowing.borrowing_id)
-
-            if response.status_code != 200:
-                return Response(response.data, status=response.status_code)
-
-            returned_books.append(response.data)
-
-        return Response(
-            {
-                "message": f"{len(returned_books)} book(s) returned successfully.",
-                "returned_books": returned_books
-            },
-            status=status.HTTP_200_OK
-        )
-
-# vi. /api/libraries/{library_id}/statistics/
+# /api/libraries/{library_id}/statistics/
 class LibraryStatisticsViewSet(viewsets.ViewSet):
     """
     Get statistics of a library.

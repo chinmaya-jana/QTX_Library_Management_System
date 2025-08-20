@@ -1,12 +1,13 @@
 import datetime
 import re
-from datetime import timezone
-from phonenumber_field.formfields import PhoneNumberField
+from phonenumber_field.phonenumber import to_python
+from phonenumber_field.serializerfields import PhoneNumberField
+from phonenumbers.phonenumberutil import is_valid_number
 from rest_framework import serializers
 from .models import (
-    Library, Author, Member, Category, Book, Borrowing, Review, BookAuthor, BookCategory, BorrowingStatus
+    Library, Author, Member, Category, Book, Borrowing, Review, BookAuthor, BookCategory
 )
-from .models import PhoneType, MemberType
+from .models import PhoneType, MemberType, BorrowingStatus
 
 # ----------------- BookAuthor -----------------
 class BookAuthorSerializer(serializers.ModelSerializer):
@@ -26,22 +27,33 @@ class BookCategorySerializer(serializers.ModelSerializer):
 
 # ----------------- Library -----------------
 class LibraryWriteSerializer(serializers.ModelSerializer):
+    phone_number = PhoneNumberField()
+
     class Meta:
         model = Library
         fields = ["name", "campus_location", "contact_email", "phone_number", "phone_type"]
 
     def validate_name(self, value):
         cleaned = value.strip()
-        if not cleaned.isalpha() and not all(ch.isalpha() or ch.isspace() for ch in cleaned):
-            raise serializers.ValidationError("Library name must contain only letters and spaces.")
+
+        # Regex: only alphabets with a single space allowed between words
+        if not re.fullmatch(r"[A-Za-z]+(?: [A-Za-z]+)*", cleaned):
+            raise serializers.ValidationError(
+                "Library name must contain only alphabets with a single space between words."
+            )
+
+        # Check uniqueness (case-insensitive)
         if Library.objects.filter(name__iexact=cleaned).exists():
             raise serializers.ValidationError("A library with this name already exists.")
+
         return cleaned
 
     def validate_campus_location(self, value):
         cleaned = value.strip()
-        if "," not in cleaned:
-            raise serializers.ValidationError("Campus location must be comma separated (e.g., City, State).")
+        if not cleaned:
+            raise serializers.ValidationError("Campus location must not be empty")
+        if not re.fullmatch(r"[A-Za-z\s,]+", cleaned):
+            raise serializers.ValidationError("Campus location must only contain alphabets and commas")
         return cleaned
 
     def validate_contact_email(self, value):
@@ -55,6 +67,14 @@ class LibraryWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("This phone number is already registered with another library.")
         return value
 
+    def validate_phone_number_type(self, value):
+        cleaned = value.strip().lower()
+        if cleaned not in PhoneType.values:
+            raise serializers.ValidationError(
+                "The phone type must be one of: mobile, work, or home."
+            )
+        return cleaned
+
 class LibraryReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Library
@@ -67,18 +87,21 @@ class AuthorWriteSerializer(serializers.ModelSerializer):
         fields = ['first_name', 'last_name', 'birth_date', 'nationality', 'biography']
 
     def validate_first_name(self, value):
+        if not value.strip():
+            raise serializers.ValidationError("Author first name must be non empty.")
+
         if not re.fullmatch(r"[A-Za-z\s\-']+", value.strip()):
             raise serializers.ValidationError(
                 "Must contain only letters, spaces, hyphens, or apostrophes."
             )
-        return value.strip().capitalize()
+        return value.strip().replace("-","").capitalize()
 
     def validate_last_name(self, value):
-        if not re.fullmatch(r"[A-Za-z']+", value.strip()):
+        if not re.fullmatch(r"[A-Za-z\s\-]+", value.strip()):
             raise serializers.ValidationError(
-                "Must contain only letters, spaces, hyphens, or apostrophes."
+                "Must contain only letters, spaces or hyphens."
             )
-        return value.strip().capitalize()
+        return value.strip().replace("-","").capitalize()
 
     def validate_birth_date(self, value):
         if value and value > datetime.date.today():
@@ -86,45 +109,49 @@ class AuthorWriteSerializer(serializers.ModelSerializer):
         return value
 
     def validate_nationality(self, value):
-        if value and not re.fullmatch(r"[A-Za-z]+", value.strip()):
+        if value and not re.fullmatch(r"[A-Za-z\s\-]+", value.strip()):
             raise serializers.ValidationError("Nationality must contain only letters, spaces, or hyphens.")
         return value.replace("-","").replace(" ", "").strip().capitalize()
 
 class AuthorReadSerializer(serializers.ModelSerializer):
-    full_name = serializers.SerializerMethodField()
+    full_name = serializers.CharField(read_only=True)
 
     class Meta:
         model = Author
-        fields = ['author_id', 'first_name', 'last_name', 'full_name', 'birth_date', 'nationality', 'biography']
-
-    def get_full_name(self, obj):
-        return f"{obj.first_name} {obj.last_name}".strip()
+        fields = ['author_id', 'full_name', 'birth_date', 'nationality', 'biography']
 
 # -----------------------------Member-----------------------------------
 class MemberWriteSerializer(serializers.ModelSerializer):
     phone = PhoneNumberField()
+
     class Meta:
         model = Member
         fields = ["first_name", "last_name", "email", "phone", "phone_type", "member_type"]
 
     def validate_first_name(self, value):
-        if not value.strip().replace(" ","").replace("-",""):
-            raise serializers.ValidationError("Name must be non empty")
+        if not value.strip():
+            raise serializers.ValidationError("Author first name must be non empty.")
 
-        if not re.fullmatch(r"[A-Za-z]+", value):
-            raise serializers.ValidationError("First name must contain only alphabets.")
-        return value.strip().replace(" ", "").replace("-","").capitalize()
+        if not re.fullmatch(r"[A-Za-z\s\-']+", value.strip()):
+            raise serializers.ValidationError(
+                "Must contain only letters, spaces, hyphens, or apostrophes."
+            )
+        return value.strip().replace("-", "").capitalize()
 
     def validate_last_name(self, value):
-        if not re.fullmatch(r"[A-Za-z]+", value):
-            raise serializers.ValidationError("Last name must contain only alphabets.")
-        return value.strip().replace(" ", "").replace("-","").capitalize()
+        if not re.fullmatch(r"[A-Za-z\s\-]+", value.strip()):
+            raise serializers.ValidationError(
+                "Must contain only letters, spaces or hyphens."
+            )
+        return value.strip().replace("-", "").capitalize()
 
     def validate_member_type(self, value):
-        allowed = [choice[0] for choice in MemberType.choices]
-        if value not in allowed:
-            raise serializers.ValidationError("Member type must be either 'Student' or 'Faculty'.")
-        return value
+        cleaned = value.strip().lower()
+        if cleaned not in MemberType.values:
+            raise serializers.ValidationError(
+                "The member type must be one of: 'student' or 'faculty'."
+            )
+        return cleaned
 
     def validate_email(self, value):
         cleaned = value.strip().lower()
@@ -134,18 +161,23 @@ class MemberWriteSerializer(serializers.ModelSerializer):
 
     def validate_phone(self, value):
         if Member.objects.filter(phone=value).exists():
-            raise serializers.ValidationError("Phone number already exists. Please use a different one.")
+            raise serializers.ValidationError("This phone number is already registered with another member.")
         return value
 
+    def validate_phone_type(self, value):
+        cleaned = value.strip().lower()
+        if cleaned not in PhoneType.values:
+            raise serializers.ValidationError(
+                "The phone type must be one of: mobile, work, or home."
+            )
+        return cleaned
+
 class MemberReadSerializer(serializers.ModelSerializer):
-    full_name = serializers.SerializerMethodField()
+    full_name = serializers.CharField(read_only=True)
 
     class Meta:
         model = Member
-        fields = "__all__"
-
-    def get_full_name(self, obj):
-        return f"{obj.first_name} {obj.last_name}".strip()
+        fields = ["member_id", "full_name", "email", "phone", "phone_type", "member_type", "registration_date", "updated_at"]
 
 # ----------------- Category -----------------
 class CategoryWriteSerializer(serializers.ModelSerializer):
@@ -154,11 +186,24 @@ class CategoryWriteSerializer(serializers.ModelSerializer):
         fields = ["name", "description"]
 
     def validate_name(self, value):
-        if not re.fullmatch(r"[A-Za-z ]+", value):
-            raise serializers.ValidationError("Category name must contain only alphabets and spaces.")
-        if Category.objects.filter(name__iexact=value).exists():
-            raise serializers.ValidationError("Category with this name already exists.")
-        return value.strip().replace("  ", " ")
+        cleaned = value.strip()
+        cleaned = re.sub(r"\s+", " ", cleaned) #Collapse multiple spaces into one
+
+        # Validate: only alphabets, spaces, hyphens
+        if not re.fullmatch(r"[A-Za-z\- ]+", cleaned):
+            raise serializers.ValidationError(
+                "Category name must contain only alphabets, spaces, or hyphens."
+            )
+        # Uniqueness check (case-insensitive)
+        if Category.objects.filter(name__iexact=cleaned).exists():
+            raise serializers.ValidationError(
+                "Category with this name already exists."
+            )
+
+        return cleaned
+
+    def validate_description(self, value):
+        return value.strip()
 
 class CategoryReadSerializer(serializers.ModelSerializer):
     class Meta:
@@ -167,7 +212,6 @@ class CategoryReadSerializer(serializers.ModelSerializer):
 
 # ----------------- Book -----------------
 class BookWriteSerializer(serializers.ModelSerializer):
-    library = serializers.PrimaryKeyRelatedField(queryset=Library.objects.all())
     class Meta:
         model = Book
         fields = ["title", "isbn", "publication_date", "total_copies", "library"]
@@ -197,28 +241,24 @@ class BookWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Total copies must be greater than zero.")
         return value
 
+    """
+    #Object level validation
     def validate(self, attrs):
         library = attrs.get("library")
         if not Library.objects.filter(pk=getattr(library, "pk", library)).exists():
             raise serializers.ValidationError({"library": "Library ID does not exist."})
         return attrs
+    """
 
 class BookReadSerializer(serializers.ModelSerializer):
-    library = serializers.SerializerMethodField()
-    authors = serializers.SerializerMethodField()
-    categories = serializers.SerializerMethodField()
+    borrowed_books = serializers.IntegerField(read_only=True)
+    library = serializers.CharField(source='library_name', read_only=True)
+    authors = serializers.CharField(source='author_name', read_only=True)
+    categories = serializers.CharField(source='category_name', read_only=True)
+
     class Meta:
         model = Book
         fields = "__all__"
-
-    def get_library(self, obj):
-        return f"{obj.library.library_id} - ({obj.library.name})"
-
-    def get_authors(self, obj):
-        return [f"{a.first_name} {a.last_name}" for a in obj.authors.all()]
-
-    def get_categories(self, obj):
-        return [c.name for c in obj.categories.all()]
 
 # ----------------- Borrowing -----------------
 class BorrowingWriteSerializer(serializers.ModelSerializer):
