@@ -1,17 +1,19 @@
+from datetime import timedelta
 from http.client import responses
 
 from django.db.models import Case, When, IntegerField, Value, Q, CharField
 from django.db.models.functions import Concat
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, status, filters
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.response import Response
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view
 from rest_framework.views import APIView
 from rest_framework.test import APIRequestFactory
+from yaml import serialize
 
 from .models import (Review, Library, Author, Member, Category,
                      Book, Borrowing, BookAuthor, BookCategory, BorrowingStatus)
@@ -21,7 +23,8 @@ from .serializers import (AuthorReadSerializer, AuthorWriteSerializer,
                           BorrowingReadSerializer, BorrowingWriteSerializer, BorrowingReturnSerializer,
                           ReviewWriteSerializer, ReviewReadSerializer, BookReadSerializer, BookWriteSerializer,
                           LibraryReadSerializer, LibraryWriteSerializer, MemberWriteSerializer, MemberReadSerializer,
-                          CategoryWriteSerializer, CategoryReadSerializer)
+                          CategoryWriteSerializer, CategoryReadSerializer, BookSlimSerializer, BorrowingSlimSerializer)
+
 
 #-----------------------------BookAuthor ViewSet-------------------------------
 class BookAuthorViewSet(viewsets.ModelViewSet):
@@ -200,7 +203,7 @@ class BookViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["title", "isbn", "library"]
     search_fields = ["title", "isbn", "library"]
-    ordering_fields = ["book_id", "publication_date", "created_at", "updated_at", "title", "total_copies", "available_copies",]
+    ordering_fields = ["book_id", "publication_date", "created_at", "updated_at", "title", "total_copies", "available_copies"]
     ordering = ["book_id"]
 
     def get_serializer_class(self):
@@ -438,35 +441,27 @@ class ReviewViewSet(viewsets.ModelViewSet):
 
 #--------------------------END--------------------------------------
 
-# Advance API end point
-# ----------------------------- Library with Books -----------------------------
-class LibraryBookViewSet(viewsets.ViewSet):
-    """
-    Custom endpoint to fetch a library along with its books (book_id + title only).
-    URL: /api/libraries/{library_id}/books/
-    """
+#--------------------Advance API end point--------------------------
 
-    def retrieve(self, request, pk=None):
-        try:
-            library = Library.objects.get(pk=pk)
-        except Library.DoesNotExist:
-            raise NotFound("Library not found.")
-
-        books = library.book_set.all().values("book_id", "title")
-
-        data = {
-            "library_id": library.library_id,
-            "name": library.name,
-            "campus_location": library.campus_location,
-            "contact_email": library.contact_email,
-            "phone_number": str(library.phone_number),
-            "phone_type": library.phone_type,
-            "created_at": library.created_at,
-            "updated_at": library.updated_at,
-            "books": list(books),
-        }
-
-        return Response(data, status=status.HTTP_200_OK)
+# List of books in a library
+# URL: /api/libraries/{library_id}/books/
+@api_view(['GET'])
+def books_in_library(request, pk):
+    library = get_object_or_404(Library, pk=pk)
+    books = library.book_set.all()
+    serializer = BookSlimSerializer(books, many=True)
+    data = {
+        "library_id": library.library_id,
+        "name": library.name,
+        "campus_location": library.campus_location,
+        "contact_email": library.contact_email,
+        "phone_number": str(library.phone_number),
+        "phone_type": library.phone_type,
+        "created_at": library.created_at,
+        "updated_at": library.updated_at,
+        "books": serializer.data,
+    }
+    return Response(data , status=status.HTTP_200_OK)
 
 # /api/books/search/
 class BookSearchViewSet(viewsets.ViewSet):
@@ -489,32 +484,25 @@ class BookSearchViewSet(viewsets.ViewSet):
         results = books.values("book_id", "title", "isbn", "publication_date")
         return Response({"results": list(results)}, status=status.HTTP_200_OK)
 
+# Get borrowing history of a member.
+# URL: /api/members/{member_id}/borrowings/
+@api_view(['GET'])
+def member_borrowings(request, pk):
+    member = get_object_or_404(Member, pk=pk)
+    borrowings = member.borrowing_set.all()
+    serializer = BorrowingSlimSerializer(borrowings, many=True)
 
-# /api/members/{member_id}/borrowings/
-class MemberBorrowingHistoryViewSet(viewsets.ViewSet):
-    """
-    Get borrowing history of a member.
-    URL: /api/members/{member_id}/borrowings/
-    """
-    def list(self, request, pk=None):
-        try:
-            member = Member.objects.get(pk=pk)
-        except Member.DoesNotExist:
-            raise NotFound("Member not found.")
-
-        borrowings = Borrowing.objects.filter(member=member).select_related("book")
-        data = [
-            {
-                "borrowing_id": b.borrowing_id,
-                "book": b.book.title,
-                "borrow_date": b.borrow_date,
-                "return_date": b.return_date,
-                "status": b.status,
-            }
-            for b in borrowings
-        ]
-        return Response({"member_id": member.member_id, "borrowings": data}, status=status.HTTP_200_OK)
-
+    data = {
+        "member_id": member.member_id,
+        "name": member.full_name,
+        "email": member.email,
+        "phone_type": member.phone_type,
+        "member_type": member.member_type,
+        "registration_date": member.registration_date,
+        "updated_at": member.updated_at,
+        "borrowed": serializer.data
+    }
+    return Response(data, status=status.HTTP_200_OK)
 
 # /api/books/{book_id}/availability/
 class BookAvailabilityViewSet(viewsets.ViewSet):
@@ -538,32 +526,127 @@ class BookAvailabilityViewSet(viewsets.ViewSet):
         }
         return Response(data, status=status.HTTP_200_OK)
 
-# /api/libraries/{library_id}/statistics/
-class LibraryStatisticsViewSet(viewsets.ViewSet):
-    """
-    Get statistics of a library.
-    URL: /api/libraries/{library_id}/statistics/
-    """
-    def retrieve(self, request, pk=None):
-        try:
-            library = Library.objects.get(pk=pk)
-        except Library.DoesNotExist:
-            raise NotFound("Library not found.")
+# Get statistics of a library.
+# URL: /api/libraries/{library_id}/statistics/
+@api_view(['GET'])
+def library_statistics(request, pk):
+    library = get_object_or_404(Library, pk=pk)
+    total_books = library.book_set.count()
 
-        total_books = library.book_set.count()
+    # Count distinct members who have borrowed books from this library
+    total_members = Member.objects.filter(
+        borrowing__book__library=library
+    ).distinct().count()
 
-        # Count distinct members who have borrowed books from this library
-        total_members = Member.objects.filter(
-            borrowing__book__library=library
-        ).distinct().count()
+    total_borrowings = Borrowing.objects.filter(book__library=library).count()
 
-        total_borrowings = Borrowing.objects.filter(book__library=library).count()
+    data = {
+        "library_id": library.library_id,
+        "name": library.name,
+        "total_books": total_books,
+        "total_members": total_members,
+        "total_borrowings": total_borrowings,
+    }
+    return Response(data, status=status.HTTP_200_OK)
 
-        data = {
-            "library_id": library.library_id,
-            "name": library.name,
-            "total_books": total_books,
-            "total_members": total_members,
-            "total_borrowings": total_borrowings,
-        }
-        return Response(data, status=status.HTTP_200_OK)
+# return a book by member_id and book_id
+# URL: http://localhost:8000/api/book/return/
+# body: member_id, book_id
+@api_view(['PUT', 'PATCH'])
+def return_book(request):
+    member_id = request.data.get("member_id")
+    book_id = request.data.get("book_id")
+
+    if not member_id or not book_id:
+        return Response(
+            {"detail": "member_id and book_id are required."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    member = get_object_or_404(Member, pk=member_id)
+    book = get_object_or_404(Book, pk=book_id)
+
+    try:
+        borrowing = Borrowing.objects.get(
+            member_id=member_id,
+            book_id=book_id,
+            status=BorrowingStatus.HOLD.lower()
+        )
+    except Borrowing.DoesNotExist:
+        return Response(
+            {"detail": "No active borrowing found for this member and book."},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    serializer = BorrowingReturnSerializer(borrowing, data={}, partial=True)
+    if serializer.is_valid():
+        instance = serializer.save()    # updates return_date + status
+
+        book.available_copies += 1
+        book.save(update_fields=["available_copies"])
+
+        return Response(
+            {
+                "message": "Book returned successfully.",
+                "data": BorrowingReadSerializer(instance).data #serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# borrow a book by member_id and book_id
+# URL: http://localhost:8000/api/book/borrow/
+# body: member_id, book_id
+@api_view(['PUT', 'PATCH'])
+def borrow_book(request):
+    member_id = request.data.get("member_id")
+    book_id = request.data.get("book_id")
+
+    if not member_id or not book_id:
+        return Response(
+            {"detail": "member_id and book_id are required."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Check member & book exist
+    member = get_object_or_404(Member, pk=member_id)
+    book = get_object_or_404(Book, pk=book_id)
+
+    # Check if book is already borrowed by this member and not returned
+    if Borrowing.objects.filter(
+        member_id=member_id,
+        book_id=book_id,
+        status=BorrowingStatus.HOLD.lower()
+    ).exists():
+        return Response(
+            {"detail": "This member has already borrowed this book and not returned yet."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Check availability
+    if book.available_copies <= 0:
+        return Response(
+            {"detail": "No available copies of this book right now."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Create borrowing entry
+    borrowing = Borrowing.objects.create(
+        member=member,
+        book=book,
+        status=BorrowingStatus.HOLD,
+        borrow_date=timezone.now().date(),
+        due_date=timezone.now().date() + timedelta(days=14)  # example: 2 weeks loan period
+    )
+
+    # Decrease available copies
+    book.available_copies -= 1
+    book.save(update_fields=["available_copies"])
+
+    return Response(
+        {
+            "message": "Book borrowed successfully.",
+            "data": BorrowingReadSerializer(borrowing).data
+        },
+        status=status.HTTP_201_CREATED
+    )

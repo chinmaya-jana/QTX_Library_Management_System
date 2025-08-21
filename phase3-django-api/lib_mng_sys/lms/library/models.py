@@ -205,7 +205,7 @@ class Borrowing(models.Model):
 
     class Meta:
         db_table = "borrowing"
-        ordering = ['due_date']
+        ordering = ['due_date', 'status']
         verbose_name = "Borrowed Book"
         verbose_name_plural = "Borrowed Books"
 

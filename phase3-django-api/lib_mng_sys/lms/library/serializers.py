@@ -1,9 +1,13 @@
-import datetime
+
 import re
+from datetime import datetime
+
+from django.utils import timezone
 from phonenumber_field.phonenumber import to_python
 from phonenumber_field.serializerfields import PhoneNumberField
 from phonenumbers.phonenumberutil import is_valid_number
 from rest_framework import serializers
+
 from .models import (
     Library, Author, Member, Category, Book, Borrowing, Review, BookAuthor, BookCategory
 )
@@ -241,15 +245,6 @@ class BookWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Total copies must be greater than zero.")
         return value
 
-    """
-    #Object level validation
-    def validate(self, attrs):
-        library = attrs.get("library")
-        if not Library.objects.filter(pk=getattr(library, "pk", library)).exists():
-            raise serializers.ValidationError({"library": "Library ID does not exist."})
-        return attrs
-    """
-
 class BookReadSerializer(serializers.ModelSerializer):
     borrowed_books = serializers.IntegerField(read_only=True)
     library = serializers.CharField(source='library_name', read_only=True)
@@ -259,6 +254,12 @@ class BookReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Book
         fields = "__all__"
+
+# To get the all books of a library
+class BookSlimSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Book
+        fields = ["book_id", "title", "total_copies", "available_copies"]
 
 # ----------------- Borrowing -----------------
 class BorrowingWriteSerializer(serializers.ModelSerializer):
@@ -299,10 +300,12 @@ class BorrowingWriteSerializer(serializers.ModelSerializer):
         return attrs
 
 class BorrowingReturnSerializer(serializers.ModelSerializer):
-    status = serializers.ChoiceField(choices=[BorrowingStatus.RETURNED])
+    member_id = serializers.IntegerField(source="member.member_id", read_only=True)
+    book_id = serializers.IntegerField(source="book.book_id", read_only=True)
     class Meta:
         model = Borrowing
-        fields = ["status"]
+        fields = ["member_id", "book_id", "return_date", "status", "late_fee"]
+        read_only_fields=["member_id", "book_id", "return_date", "status", "late_fee"]
 
     def validate(self, attrs):
         borrowing = self.instance
@@ -310,12 +313,24 @@ class BorrowingReturnSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"detail": "This borrowing is already returned."})
         return attrs
 
+    def update(self, instance, validated_data):
+        instance.status = BorrowingStatus.RETURNED
+        instance.return_date = timezone.now()
+        instance.save()
+        return instance
+
 class BorrowingReadSerializer(serializers.ModelSerializer):
     member = serializers.StringRelatedField()
     book = serializers.StringRelatedField()
     class Meta:
         model = Borrowing
         fields = "__all__"
+
+class BorrowingSlimSerializer(serializers.ModelSerializer):
+    book_title = serializers.CharField(read_only=True)
+    class Meta:
+        model = Borrowing
+        fields = ['borrowing_id', 'book_title', 'borrow_date', 'due_date', 'return_date', 'status', 'late_fee']
 
 # ----------------- Review -----------------
 class ReviewWriteSerializer(serializers.ModelSerializer):
